@@ -141,11 +141,23 @@ git clone https://github.com/L00rdD/errol && cd errol
 sh deploy/install.sh friday        # or cyberpunk, or hogwarts
 ```
 
-The script compiles inside a `rust:slim-trixie` container, so the Pi needs no
-Rust toolchain. It then installs `libsdl2-2.0-0` and the binary, and runs
-Errol as a systemd service on the HDMI display, as the current user. The first
-build takes about 10 minutes on a Pi 4. Re-run the script after a `git pull`,
-or to switch looks.
+The script compiles inside a container (`deploy/Dockerfile`: Rust and SDL2's
+headers on Debian trixie, built once and kept), so the Pi needs no Rust
+toolchain. It then installs `libsdl2-2.0-0` and the binary, and runs Errol as a
+systemd service on the HDMI display, as the current user. The first build
+takes about 10 minutes on a Pi 4. Re-run the script after a `git pull`, or to
+switch looks.
+
+Once the Pi is set up, deploy from a Mac with Apple silicon instead:
+
+```sh
+sh deploy/push.sh                  # or: sh deploy/push.sh hogwarts
+```
+
+It builds in the same image under Docker (colima or Docker Desktop: arm64 like
+the Pi, so no emulation), keeps the build in volumes, sends the binary over ssh
+and restarts the service: under 20 s after a change. `ERROL_HOST` names the Pi
+(`dpi.local` by default).
 
 Settings go in `/etc/default/errol`:
 
