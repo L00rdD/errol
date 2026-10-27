@@ -6,8 +6,9 @@ use std::time::Duration;
 
 use errol_domain::usecases::ObserveFeed;
 
-/// The feed service writes every 3 s; reading every 2 s keeps the lag under that.
-const INTERVAL: Duration = Duration::from_secs(2);
+/// The feed service writes every 3 s; reading every second adds at most a
+/// second to that before an event takes the screen.
+const INTERVAL: Duration = Duration::from_secs(1);
 
 pub fn start(observe: Arc<ObserveFeed>) {
     observe.refresh();

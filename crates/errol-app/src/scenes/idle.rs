@@ -453,7 +453,7 @@ fn draw_card(
         return;
     }
     gfx.canvas.save();
-    gfx.canvas.set_global_alpha(alpha);
+    gfx.canvas.set_global_alpha(gfx.alpha * alpha);
     let x = CARD_X + shift;
     let parchment = gfx.hogwarts() && gfx.hall.is_some();
     frame(gfx, x, card);

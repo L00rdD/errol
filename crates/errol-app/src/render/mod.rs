@@ -166,6 +166,7 @@ pub fn run(options: &Options, observe: &ObserveFeed, pictures: &Pictures) -> Res
             palette: look.palette(),
             t,
             hall: hall.as_ref().filter(|_| look == Look::Hogwarts),
+            alpha: 1.0,
         };
         stage.draw(&mut gfx, &view, &mut textures, dt);
         canvas.restore();

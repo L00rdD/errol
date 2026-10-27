@@ -94,6 +94,9 @@ pub struct Gfx<'a> {
     pub t: f32,
     /// The Great Hall's baked sprites, while the look is hogwarts.
     pub hall: Option<&'a super::Hall>,
+    /// Opacity of the scene being drawn (it fades in and out on a change of
+    /// scene); a part that fades on its own multiplies with it.
+    pub alpha: f32,
 }
 
 impl Gfx<'_> {

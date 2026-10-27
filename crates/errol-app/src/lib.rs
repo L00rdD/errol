@@ -6,7 +6,7 @@
 //! ```text
 //! options    command line and environment
 //! injector   the only place that knows which adapter implements which port
-//! poller     reads the feed every 2 s on its own thread
+//! poller     reads the feed every second on its own thread
 //! pictures   fetches and decodes posters and backdrops on a worker thread
 //! render     the window, the GL context, the frame loop, drawing helpers
 //! look       the three looks: friday (the AI after J.A.R.V.I.S.), cyberpunk, hogwarts

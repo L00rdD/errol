@@ -46,7 +46,7 @@ to be set from a home page. Without one, Errol keeps its own (`--look` or
 | Scene | When | For how long |
 | :--- | :--- | :--- |
 | Idle | nothing else | A clock in its turning rings, and cards that slide by every 12 s: the next One Piece chapter with a countdown, the portfolio, the house, downloads, latest additions with their posters, the server's free space |
-| Event | a lamp switches; the projection screen moves (its cloth comes down live); the projector starts or changes app; a download finishes; a film or an episode is imported; a new chapter is out | 25 s for a lamp, 40 s for the screen and the projector, 90 s for downloads and imports, 2 min for a chapter. Events take turns, and a burst (ten episodes imported at once) takes a single turn |
+| Event | a lamp switches; the projection screen moves (its cloth comes down live); the projector starts or changes app; a download finishes; a film or an episode is imported; a new chapter is out | 25 s for a lamp, 40 s for the screen and the projector, 90 s for downloads and imports, 2 min for a chapter. A new event cuts the one on screen short and shows at once; those still waiting follow it, and a burst (ten episodes imported at once) takes a single turn |
 | Cinema | a video plays on Jellyfin | Until it stops: the blurred backdrop drifting, the poster in a holographic frame, the story, progress and end time |
 
 The screen never replays the past: what happened before it started only sets
@@ -59,7 +59,7 @@ your feed  ──>  screen.json  ──>  errol  ──>  HDMI
 (any service)    (over HTTP)      (Rust, OpenGL ES, KMS/DRM)
 ```
 
-Errol reads one JSON file over HTTP every 2 s and draws at 30 frames per
+Errol reads one JSON file over HTTP every second and draws at 30 frames per
 second. The file is written by whatever knows about your home. Mine is a small
 Python service that reads Jellyfin, a home hub, Transmission, Radarr and
 Sonarr every 3 s and turns each change into an event.

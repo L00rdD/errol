@@ -12,7 +12,7 @@ pub struct ObserveFeedDeps {
 /// What the renderer draws: the latest snapshot and the scene of the moment.
 #[derive(Debug, Clone, PartialEq)]
 pub struct View {
-    /// Shared, not copied: the snapshot changes every 2 s, the view 30 times a second.
+    /// Shared, not copied: the snapshot changes every second, the view 30 times a second.
     pub snapshot: Option<Arc<Snapshot>>,
     /// When the snapshot was read; playback positions move on from there.
     pub read_at: Timestamp,

@@ -1,6 +1,7 @@
 //! Which scene the screen shows, and for how long.
 //!
-//! An event takes the screen for its own time, one after another; between
+//! An event takes the screen for its own time; a newer one cuts it short and
+//! takes the screen at once, and those still waiting follow it. Between
 //! events, the cinema while a video plays, otherwise the idle recap. The first
 //! batch of events only marks them seen, so a restart does not replay the past.
 
@@ -46,7 +47,8 @@ impl SceneDirector {
         }
     }
 
-    /// Takes the events of a new snapshot; the new ones join the queue.
+    /// Takes the events of a new snapshot. The new ones cut the event on
+    /// screen short and go first; those that were waiting come after them.
     pub fn absorb(&mut self, events: &[Event]) {
         let batch: HashSet<String> = events
             .iter()
@@ -55,6 +57,7 @@ impl SceneDirector {
         let Some(seen) = self.seen.replace(batch) else {
             return;
         };
+        let mut fresh: Vec<Event> = Vec::new();
         for event in events {
             if seen.contains(event.id.as_str()) || Self::duration(&event.kind).is_none() {
                 continue;
@@ -62,7 +65,8 @@ impl SceneDirector {
             // several episodes of one series imported together: one turn is enough
             if let EventKind::Import(import) = &event.kind {
                 let same = |other: &Event| matches!(&other.kind, EventKind::Import(o) if o.title == import.title);
-                if self.queue.iter().any(same)
+                if fresh.iter().any(same)
+                    || self.queue.iter().any(same)
                     || self
                         .current
                         .as_ref()
@@ -71,11 +75,16 @@ impl SceneDirector {
                     continue;
                 }
             }
-            self.queue.push_back(event.clone());
-            while self.queue.len() > MAX_QUEUE {
-                self.queue.pop_front();
-            }
+            fresh.push(event.clone());
         }
+        if fresh.is_empty() {
+            return;
+        }
+        self.current = None;
+        let skip = fresh.len().saturating_sub(MAX_QUEUE);
+        let waiting = std::mem::take(&mut self.queue);
+        self.queue = fresh.into_iter().skip(skip).chain(waiting).collect();
+        self.queue.truncate(MAX_QUEUE);
     }
 
     /// The scene at `now`, given the latest snapshot.
@@ -230,6 +239,39 @@ mod tests {
         ]);
         director.scene(Timestamp(0), None);
         assert_eq!(director.scene(Timestamp::from_secs(90), None), Scene::Idle);
+    }
+
+    #[test]
+    fn a_new_event_cuts_the_one_on_screen_short() {
+        let mut director = SceneDirector::default();
+        director.absorb(&[]);
+        director.absorb(&[import("a", "Arcane")]);
+        director.scene(Timestamp(0), None);
+        director.absorb(&[import("a", "Arcane"), light("b")]);
+        let Scene::Event { event, started, .. } = director.scene(Timestamp::from_secs(3), None)
+        else {
+            panic!()
+        };
+        assert_eq!((event.id.as_str(), started), ("b", Timestamp::from_secs(3)));
+        assert_eq!(director.scene(Timestamp::from_secs(28), None), Scene::Idle);
+    }
+
+    #[test]
+    fn a_new_event_goes_before_those_still_waiting() {
+        let mut director = SceneDirector::default();
+        director.absorb(&[]);
+        director.absorb(&[light("a"), light("b")]);
+        director.scene(Timestamp(0), None);
+        director.absorb(&[light("a"), light("b"), light("c")]);
+        let order = [0, 25].map(
+            |secs| match director.scene(Timestamp::from_secs(secs), None) {
+                Scene::Event { event, .. } => event.id.as_str().to_owned(),
+                other => panic!("{other:?}"),
+            },
+        );
+        assert_eq!(order, ["c", "b"]);
+        // the one cut short does not come back
+        assert_eq!(director.scene(Timestamp::from_secs(50), None), Scene::Idle);
     }
 
     #[test]
