@@ -38,11 +38,7 @@ pub fn draw(
 
     // the words slide in one after the other
     let slide = |delay: f32| 30.0 * (1.0 - ease_out(progress(age - delay, 0.7)));
-    let glyphs = if gfx.cyber() {
-        "#$%&@!?/<>=+01"
-    } else {
-        "0123456789ABCDEF·:/"
-    };
+    let glyphs = gfx.glyphs();
     let kicker_colour = if gfx.cyber() {
         palette.accent2
     } else {
@@ -72,6 +68,8 @@ pub fn draw(
         let shown = decode(line, age - 0.15, 1.1, glyphs);
         let colour = if gfx.cyber() {
             palette.hot
+        } else if gfx.hogwarts() {
+            palette.accent
         } else {
             palette.text
         };
@@ -90,7 +88,7 @@ pub fn draw(
             TEXT_X + slide(0.3),
             y,
             &sub,
-            Type::new(Face::Body, 20.0),
+            Type::new(Face::Italic, 20.0),
             palette.muted,
             Anchor::TOP_LEFT,
         );
@@ -228,13 +226,19 @@ fn visual(
                     1.0,
                 );
             } else {
-                gfx.halo(CX, CY, 150.0, fade(gfx.palette.accent2, 0.18));
+                // gold in hogwarts (a house point total), amber in friday
+                let colour = if gfx.hogwarts() {
+                    gfx.palette.accent
+                } else {
+                    gfx.palette.accent2
+                };
+                gfx.halo(CX, CY, 150.0, fade(colour, 0.18));
                 gfx.glow_text(
                     CX,
                     CY,
                     &number,
                     Type::new(Face::Display, 78.0),
-                    gfx.palette.accent2,
+                    colour,
                     Anchor::MIDDLE_CENTER,
                     2.5,
                 );

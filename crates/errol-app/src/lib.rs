@@ -9,9 +9,9 @@
 //! poller     reads the feed every 2 s on its own thread
 //! pictures   fetches and decodes posters and backdrops on a worker thread
 //! render     the window, the GL context, the frame loop, drawing helpers
-//! look       the two looks: friday (the AI after J.A.R.V.I.S.) and cyberpunk
+//! look       the three looks: friday (the AI after J.A.R.V.I.S.), cyberpunk, hogwarts
 //! anim       easing, decoding text, timing
-//! fx         animated backgrounds: neural network, Netwatch grid
+//! fx         animated backgrounds: neural network, Netwatch grid, Great Hall candles
 //! scenes     header, ticker, idle recap, events, cinema
 //! ```
 

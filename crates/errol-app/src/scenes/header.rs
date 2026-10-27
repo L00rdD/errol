@@ -4,13 +4,15 @@ use errol_domain::strategies::Scene;
 use errol_domain::usecases::View;
 
 use super::text;
-use crate::look::fade;
+use crate::look::{Look, fade};
 use crate::render::{Anchor, Face, Gfx, Type};
 
 const BRAND_FRIDAY: &str = "F.R.I.D.A.Y.";
 const BRAND_FRIDAY_TYPE: Type = Type::new(Face::Display, 13.0).spaced(3.9);
 const BRAND_CYBER: &str = "NETWATCH//ERROL";
 const BRAND_CYBER_TYPE: Type = Type::new(Face::Bold, 19.0).spaced(1.5);
+const BRAND_HOGWARTS: &str = "HOGWARTS · ERROL";
+const BRAND_HOGWARTS_TYPE: Type = Type::new(Face::Display, 14.0).spaced(2.6);
 
 pub fn draw(gfx: &mut Gfx, view: &View) {
     let palette = gfx.palette;
@@ -33,6 +35,19 @@ pub fn draw(gfx: &mut Gfx, view: &View) {
             Anchor::MIDDLE_LEFT,
             0.0,
         );
+    } else if gfx.hogwarts() {
+        // a gilt double rule under the name, like the home page's banner
+        gfx.vertical_gradient(0.0, 0.0, 800.0, 38.0, palette.bg, fade(palette.bg, 0.2));
+        gfx.rect(0.0, 34.0, 800.0, 1.0, fade(palette.accent, 0.55));
+        gfx.rect(0.0, 37.0, 800.0, 1.0, fade(palette.accent, 0.25));
+        gfx.title(
+            16.0,
+            19.0,
+            BRAND_HOGWARTS,
+            BRAND_HOGWARTS_TYPE,
+            palette.accent,
+            Anchor::MIDDLE_LEFT,
+        );
     } else {
         gfx.vertical_gradient(0.0, 0.0, 800.0, 38.0, palette.bg, fade(palette.bg, 0.0));
         gfx.rect(0.0, 37.0, 800.0, 1.0, fade(palette.accent, 0.12));
@@ -49,16 +64,21 @@ pub fn draw(gfx: &mut Gfx, view: &View) {
     let brand_end =
         16.0 + if gfx.cyber() {
             gfx.measure(BRAND_CYBER, BRAND_CYBER_TYPE)
+        } else if gfx.hogwarts() {
+            gfx.measure(BRAND_HOGWARTS, BRAND_HOGWARTS_TYPE)
         } else {
             gfx.measure(BRAND_FRIDAY, BRAND_FRIDAY_TYPE)
         } + 12.0;
-    let mode = match (&view.scene, gfx.cyber()) {
-        (Scene::Idle, false) => "VEILLE",
-        (Scene::Idle, true) => "STANDBY",
-        (Scene::Event { .. }, false) => "ALERTE",
-        (Scene::Event { .. }, true) => "INCOMING",
-        (Scene::Cinema(_), false) => "PROJECTION",
-        (Scene::Cinema(_), true) => "BRAINDANCE",
+    let mode = match (&view.scene, gfx.look) {
+        (Scene::Idle, Look::Friday) => "VEILLE",
+        (Scene::Idle, Look::Cyberpunk) => "STANDBY",
+        (Scene::Idle, Look::Hogwarts) => "TOUT EST CALME",
+        (Scene::Event { .. }, Look::Friday) => "ALERTE",
+        (Scene::Event { .. }, Look::Cyberpunk) => "INCOMING",
+        (Scene::Event { .. }, Look::Hogwarts) => "HIBOU POSTAL",
+        (Scene::Cinema(_), Look::Friday) => "PROJECTION",
+        (Scene::Cinema(_), Look::Cyberpunk) => "BRAINDANCE",
+        (Scene::Cinema(_), Look::Hogwarts) => "PENSINE",
     };
     let blink = 0.35 + 0.65 * (gfx.t * std::f32::consts::PI).sin().abs();
     let dot = if view.warning.is_some() {

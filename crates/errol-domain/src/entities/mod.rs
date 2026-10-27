@@ -8,7 +8,7 @@ mod time;
 pub use event::{Event, EventId, EventKind};
 pub use feed::{
     Chapter, Cover, Disk, Download, House, Import, MediaKind, NextChapter, OnePiece, Outlet,
-    Playing, Portfolio, Position, Projector, Services, Snapshot,
+    Playing, Portfolio, Position, Projector, Services, Settings, Snapshot,
 };
 pub use picture::{Picture, PictureRef};
 pub use time::Timestamp;

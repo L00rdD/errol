@@ -62,10 +62,26 @@ pub fn draw(gfx: &mut Gfx, view: &View, playing: &Playing, age: f32, textures: &
         poster(gfx, image, px, py, pw, ph, age);
     }
 
+    if gfx.hogwarts() {
+        // the candles of the hall float behind the words: a shadow keeps them readable
+        let mut shade = Path::new();
+        shade.rect(INFO_X - 24.0, TOP, WIDTH - INFO_X + 24.0, BOTTOM - TOP);
+        let dark = Paint::linear_gradient(
+            INFO_X - 24.0,
+            0.0,
+            INFO_X + 40.0,
+            0.0,
+            fade(palette.bg, 0.0),
+            fade(palette.bg, 0.72),
+        );
+        gfx.canvas.fill_path(&shade, &dark);
+    }
     let slide = |delay: f32| 30.0 * (1.0 - ease_out(progress(age - delay, 0.9)));
     let mut y = TOP + 34.0;
     let kicker = if gfx.cyber() {
         "Braindance · lecture"
+    } else if gfx.hogwarts() {
+        "La Pensine"
     } else {
         "En projection"
     };
@@ -106,11 +122,7 @@ pub fn draw(gfx: &mut Gfx, view: &View, playing: &Playing, age: f32, textures: &
     } else {
         name
     };
-    let glyphs = if gfx.cyber() {
-        "#$%&@!?/<>=+01"
-    } else {
-        "0123456789ABCDEF·:/"
-    };
+    let glyphs = gfx.glyphs();
     for line in gfx.wrap(&name, INFO_W, style, 2) {
         let shown = decode(&line, age - 0.1, 1.2, glyphs);
         gfx.title(
@@ -120,6 +132,8 @@ pub fn draw(gfx: &mut Gfx, view: &View, playing: &Playing, age: f32, textures: &
             style,
             if gfx.cyber() {
                 palette.hot
+            } else if gfx.hogwarts() {
+                palette.accent
             } else {
                 palette.text
             },
@@ -143,7 +157,11 @@ pub fn draw(gfx: &mut Gfx, view: &View, playing: &Playing, age: f32, textures: &
         INFO_X + slide(0.2),
         y,
         &sub,
-        Type::new(Face::Strong, 19.0),
+        if gfx.hogwarts() {
+            Type::new(Face::Italic, 20.0)
+        } else {
+            Type::new(Face::Strong, 19.0)
+        },
         palette.accent2,
         Anchor::TOP_LEFT,
     );
@@ -174,7 +192,11 @@ pub fn draw(gfx: &mut Gfx, view: &View, playing: &Playing, age: f32, textures: &
         y,
         &playing.overview,
         INFO_W,
-        Type::new(Face::Body, 15.5),
+        if gfx.hogwarts() {
+            Type::new(Face::Italic, 16.0)
+        } else {
+            Type::new(Face::Body, 15.5)
+        },
         19.5,
         fade(palette.text, 0.85),
         3,

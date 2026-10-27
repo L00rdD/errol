@@ -4,42 +4,55 @@ use chrono::DateTime;
 use errol_domain::entities::{
     Chapter, Cover, Disk, Download, Event, EventId, EventKind, House, Import, MediaKind,
     NextChapter, OnePiece, Outlet, PictureRef, Playing, Portfolio, Position, Projector, Services,
-    Snapshot, Timestamp,
+    Settings, Snapshot, Timestamp,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use serde_json::Value;
 
 #[derive(Debug, Deserialize, Default)]
 #[serde(default)]
 pub struct FeedFile {
     updated_at: Option<String>,
+    #[serde(deserialize_with = "nullable")]
     playing: Vec<PlayingModel>,
-    events: Vec<BTreeMap<String, Value>>,
+    #[serde(deserialize_with = "nullable")]
+    /// Kept as raw values and read one by one: a bad event is skipped, not the file.
+    events: Vec<Value>,
     house: Option<HouseModel>,
+    #[serde(deserialize_with = "nullable")]
     downloads: Vec<DownloadModel>,
+    #[serde(deserialize_with = "nullable")]
     recent: Vec<ImportModel>,
     one_piece: Option<OnePieceModel>,
     portfolio: Option<PortfolioModel>,
     disk: Option<DiskModel>,
     services: Option<ServicesModel>,
-    errors: BTreeMap<String, String>,
+    #[serde(deserialize_with = "nullable")]
+    errors: BTreeMap<String, Option<String>>,
+    settings: Option<SettingsModel>,
 }
 
 #[derive(Debug, Deserialize, Default)]
 #[serde(default)]
 struct PlayingModel {
+    #[serde(deserialize_with = "nullable")]
     id: String,
-    #[serde(rename = "type")]
+    #[serde(rename = "type", deserialize_with = "nullable")]
     kind: String,
     title: Option<String>,
     series: Option<String>,
     season: Option<u32>,
     episode: Option<u32>,
     year: Option<u32>,
+    #[serde(deserialize_with = "nullable")]
     overview: String,
+    #[serde(deserialize_with = "nullable")]
     genres: Vec<String>,
+    #[serde(deserialize_with = "nullable")]
     runtime: f64,
+    #[serde(deserialize_with = "nullable")]
     position: f64,
+    #[serde(deserialize_with = "nullable")]
     paused: bool,
     device: Option<String>,
     client: Option<String>,
@@ -51,23 +64,31 @@ struct PlayingModel {
 #[derive(Debug, Deserialize, Default)]
 #[serde(default)]
 struct HouseModel {
+    #[serde(deserialize_with = "nullable")]
     outlets: Vec<OutletModel>,
+    #[serde(deserialize_with = "nullable")]
     covers: Vec<CoverModel>,
+    #[serde(deserialize_with = "nullable")]
     projectors: Vec<ProjectorModel>,
 }
 
 #[derive(Debug, Deserialize, Default)]
 #[serde(default)]
 struct OutletModel {
+    #[serde(deserialize_with = "nullable")]
     id: String,
+    #[serde(deserialize_with = "nullable")]
     name: String,
+    #[serde(deserialize_with = "nullable")]
     on: bool,
 }
 
 #[derive(Debug, Deserialize, Default)]
 #[serde(default)]
 struct CoverModel {
+    #[serde(deserialize_with = "nullable")]
     id: String,
+    #[serde(deserialize_with = "nullable")]
     name: String,
     position: Option<f64>,
     moving: Option<Value>,
@@ -76,8 +97,11 @@ struct CoverModel {
 #[derive(Debug, Deserialize, Default)]
 #[serde(default)]
 struct ProjectorModel {
+    #[serde(deserialize_with = "nullable")]
     id: String,
+    #[serde(deserialize_with = "nullable")]
     name: String,
+    #[serde(deserialize_with = "nullable")]
     on: bool,
     app: Option<String>,
 }
@@ -85,7 +109,9 @@ struct ProjectorModel {
 #[derive(Debug, Deserialize, Default)]
 #[serde(default)]
 struct DownloadModel {
+    #[serde(deserialize_with = "nullable")]
     name: String,
+    #[serde(deserialize_with = "nullable")]
     percent: f64,
     eta: Option<f64>,
 }
@@ -113,7 +139,9 @@ struct OnePieceModel {
 #[derive(Debug, Deserialize, Default)]
 #[serde(default)]
 struct ChapterModel {
+    #[serde(deserialize_with = "nullable")]
     scan: u32,
+    #[serde(deserialize_with = "nullable")]
     name: String,
     arc: Option<String>,
     pages: Option<u32>,
@@ -122,7 +150,9 @@ struct ChapterModel {
 #[derive(Debug, Deserialize, Default)]
 #[serde(default)]
 struct NextModel {
+    #[serde(deserialize_with = "nullable")]
     scan: u32,
+    #[serde(deserialize_with = "nullable")]
     at: String,
 }
 
@@ -130,17 +160,24 @@ struct NextModel {
 #[serde(default)]
 struct PortfolioModel {
     name: Option<String>,
+    #[serde(deserialize_with = "nullable")]
     mode: String,
+    #[serde(deserialize_with = "nullable")]
     equity: f64,
+    #[serde(deserialize_with = "nullable")]
     initial: f64,
+    #[serde(deserialize_with = "nullable")]
     trades: u32,
+    #[serde(deserialize_with = "nullable")]
     positions: Vec<PositionModel>,
 }
 
 #[derive(Debug, Deserialize, Default)]
 #[serde(default)]
 struct PositionModel {
+    #[serde(deserialize_with = "nullable")]
     pair: String,
+    #[serde(deserialize_with = "nullable")]
     avg: f64,
     price: Option<f64>,
 }
@@ -148,16 +185,40 @@ struct PositionModel {
 #[derive(Debug, Deserialize, Default)]
 #[serde(default)]
 struct DiskModel {
+    #[serde(deserialize_with = "nullable")]
     total: u64,
+    #[serde(deserialize_with = "nullable")]
     used: u64,
+    #[serde(deserialize_with = "nullable")]
     free: u64,
 }
 
 #[derive(Debug, Deserialize, Default)]
 #[serde(default)]
+struct SettingsModel {
+    look: Option<String>,
+    #[serde(deserialize_with = "nullable")]
+    follow_hub: bool,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(default)]
 struct ServicesModel {
+    #[serde(deserialize_with = "nullable")]
     up: u32,
+    #[serde(deserialize_with = "nullable")]
     total: u32,
+}
+
+/// A JSON null read as an absent field: the field's default. A source that
+/// answers `"on": null` (a projector just after a reboot) must not make the
+/// whole file unreadable.
+fn nullable<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Default + Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer).map(Option::unwrap_or_default)
 }
 
 /// RFC 3339 to a timestamp; None when absent or malformed.
@@ -216,7 +277,13 @@ impl FeedFile {
                     id: item.id,
                 })
                 .collect(),
-            events: self.events.iter().filter_map(event).collect(),
+            events: self
+                .events
+                .iter()
+                .filter_map(Value::as_object)
+                .map(|fields| fields.clone().into_iter().collect::<BTreeMap<_, _>>())
+                .filter_map(|fields| event(&fields))
+                .collect(),
             house: self.house.map(|house| House {
                 outlets: house
                     .outlets
@@ -315,8 +382,15 @@ impl FeedFile {
             warnings: self
                 .errors
                 .into_iter()
-                .map(|(source, error)| format!("{source}: {error}"))
+                .map(|(source, error)| format!("{source}: {}", error.unwrap_or_default()))
                 .collect(),
+            settings: self
+                .settings
+                .map(|settings| Settings {
+                    look: settings.look.filter(|look| !look.is_empty()),
+                    follow_hub: settings.follow_hub,
+                })
+                .unwrap_or_default(),
         }
     }
 }
@@ -439,6 +513,58 @@ mod tests {
     #[test]
     fn the_feed_errors_become_warnings() {
         assert_eq!(snapshot().warnings, vec!["house: timeout".to_owned()]);
+    }
+
+    #[test]
+    fn the_settings_name_the_look_asked_for() {
+        assert_eq!(
+            snapshot().settings,
+            Settings {
+                look: Some("hogwarts".into()),
+                follow_hub: true
+            }
+        );
+    }
+
+    #[test]
+    fn an_empty_look_is_no_look() {
+        let file = r#"{"settings": {"look": "", "follow_hub": false}}"#;
+        let snapshot = serde_json::from_str::<FeedFile>(file)
+            .unwrap()
+            .into_snapshot("");
+        assert_eq!(snapshot.settings.look, None);
+    }
+
+    #[test]
+    fn nulls_read_like_absent_fields() {
+        let file = r#"{"playing": [{"id": "x", "type": null, "overview": null, "genres": null, "runtime": null,
+                        "position": null, "paused": null}],
+                       "events": null, "downloads": null, "recent": null, "errors": null,
+                       "house": {"outlets": [{"id": "lamp", "name": null, "on": null}], "covers": null,
+                                 "projectors": [{"id": "projector", "name": "Projector", "on": null, "app": null}]},
+                       "portfolio": {"name": null, "mode": null, "equity": null, "initial": null, "trades": null,
+                                     "positions": [{"pair": null, "avg": null, "price": null}]},
+                       "disk": {"total": null, "used": null, "free": null},
+                       "services": {"up": null, "total": null},
+                       "settings": {"look": null, "follow_hub": null}}"#;
+        let snapshot = serde_json::from_str::<FeedFile>(file)
+            .unwrap()
+            .into_snapshot("");
+        let house = snapshot.house.unwrap();
+        assert!(!house.projectors[0].on);
+        assert!(!snapshot.playing[0].paused);
+        assert_eq!(snapshot.portfolio.unwrap().trades, 0);
+    }
+
+    #[test]
+    fn a_broken_event_is_skipped_and_the_rest_is_read() {
+        let file = r#"{"events": [null, 3, {"id": "1", "kind": "light", "name": "Lamp", "on": true}],
+                       "errors": {"house": null}}"#;
+        let snapshot = serde_json::from_str::<FeedFile>(file)
+            .unwrap()
+            .into_snapshot("");
+        assert_eq!(snapshot.events.len(), 1);
+        assert_eq!(snapshot.warnings, vec!["house: ".to_owned()]);
     }
 
     #[test]

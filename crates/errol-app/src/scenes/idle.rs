@@ -209,10 +209,24 @@ fn core(gfx: &mut Gfx, view: &View) {
     );
 }
 
-/// The frame of a card: corner brackets in friday, a cut panel in cyberpunk.
+/// The frame of a card: corner brackets in friday, a cut panel in cyberpunk,
+/// a portrait's double gilt rule over warm dark wood in hogwarts.
 fn frame(gfx: &mut Gfx, x: f32) {
     let palette = gfx.palette;
-    if gfx.cyber() {
+    if gfx.hogwarts() {
+        let mut path = femtovg::Path::new();
+        path.rect(x, CARD_Y, CARD_W, CARD_H);
+        let paint = femtovg::Paint::linear_gradient(
+            x,
+            CARD_Y,
+            x,
+            CARD_Y + CARD_H,
+            Color::rgbaf(0.16, 0.12, 0.08, 0.86),
+            Color::rgbaf(0.09, 0.07, 0.06, 0.86),
+        );
+        gfx.canvas.fill_path(&path, &paint);
+        gfx.gilt_frame(x, CARD_Y, CARD_W, CARD_H);
+    } else if gfx.cyber() {
         let path = Gfx::cut_box(x, CARD_Y, CARD_W, CARD_H, 22.0);
         let paint = femtovg::Paint::linear_gradient(
             x,
@@ -259,7 +273,16 @@ fn frame(gfx: &mut Gfx, x: f32) {
 }
 
 fn big(gfx: &mut Gfx, x: f32, y: f32, value: &str, colour: Color) {
-    if gfx.cyber() {
+    if gfx.hogwarts() {
+        gfx.title(
+            x,
+            y,
+            value,
+            Type::new(Face::Display, 38.0),
+            colour,
+            Anchor::TOP_LEFT,
+        );
+    } else if gfx.cyber() {
         gfx.split_text(
             x,
             y,
@@ -293,11 +316,7 @@ fn heading(gfx: &mut Gfx, x: f32, y: f32, value: &str, age: f32) -> f32 {
     } else {
         value.to_owned()
     };
-    let glyphs = if gfx.cyber() {
-        "#$%&@!?/<>=+01"
-    } else {
-        "0123456789ABCDEF·:/"
-    };
+    let glyphs = gfx.glyphs();
     let lines = gfx.wrap(&value, CARD_W - 44.0, style, 2);
     let line = style.size * 1.3;
     for (index, row) in lines.iter().enumerate() {

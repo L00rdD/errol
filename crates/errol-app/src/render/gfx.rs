@@ -11,15 +11,20 @@ pub struct Fonts {
     pub medium: FontId,
     pub semibold: FontId,
     pub bold: FontId,
+    pub cinzel: FontId,
+    pub fell: FontId,
+    pub fell_italic: FontId,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Face {
-    /// Titles: Michroma in friday, Rajdhani Bold in cyberpunk.
+    /// Titles: Michroma in friday, Rajdhani Bold in cyberpunk, Cinzel in hogwarts.
     Display,
     Body,
     Strong,
     Bold,
+    /// Hogwarts' italic hand (IM Fell English); the body face elsewhere.
+    Italic,
 }
 
 /// Where a text is anchored.
@@ -94,13 +99,30 @@ impl Gfx<'_> {
         self.look == Look::Cyberpunk
     }
 
+    pub fn hogwarts(&self) -> bool {
+        self.look == Look::Hogwarts
+    }
+
+    /// What a title is made of while it appears: hex digits in friday, symbols
+    /// in cyberpunk, nothing in hogwarts (the letters are written in ink).
+    pub fn glyphs(&self) -> &'static str {
+        match self.look {
+            Look::Friday => "0123456789ABCDEF·:/",
+            Look::Cyberpunk => "#$%&@!?/<>=+01",
+            Look::Hogwarts => "",
+        }
+    }
+
     fn font(&self, face: Face) -> [FontId; 2] {
         // Michroma has no ◆, no arrows: Rajdhani catches what it lacks
         let primary = match (face, self.look) {
             (Face::Display, Look::Friday) => self.fonts.michroma,
+            (Face::Display | Face::Strong | Face::Bold, Look::Hogwarts) => self.fonts.cinzel,
+            (Face::Body, Look::Hogwarts) => self.fonts.fell,
+            (Face::Italic, Look::Hogwarts) => self.fonts.fell_italic,
             (Face::Display | Face::Bold, _) => self.fonts.bold,
             (Face::Strong, _) => self.fonts.semibold,
-            (Face::Body, _) => self.fonts.medium,
+            (Face::Body | Face::Italic, _) => self.fonts.medium,
         };
         [primary, self.fonts.semibold]
     }
@@ -176,13 +198,43 @@ impl Gfx<'_> {
         self.text(x, y, text, style, color, anchor);
     }
 
-    /// The title of a look: glow in friday, chromatic split in cyberpunk.
+    /// The title of a look: glow in friday, chromatic split in cyberpunk,
+    /// gold lit by candles in hogwarts.
     pub fn title(&mut self, x: f32, y: f32, text: &str, style: Type, color: Color, anchor: Anchor) {
         if self.cyber() {
             self.split_text(x, y, text, style, color, anchor, 0.0);
+        } else if self.hogwarts() {
+            let warm = Color::rgbaf(1.0, 0.77, 0.36, 1.0);
+            self.glow_text(
+                x,
+                y,
+                text,
+                style,
+                crate::look::mix(color, warm, 0.15),
+                anchor,
+                1.6,
+            );
         } else {
             self.glow_text(x, y, text, style, color, anchor, 1.2);
         }
+    }
+
+    /// Hogwarts' frame: a double gilt rule, like the portraits of the castle.
+    pub fn gilt_frame(&mut self, x: f32, y: f32, w: f32, h: f32) {
+        let gold = self.palette.accent;
+        self.rect_line(x, y, w, h, fade(gold, 0.85), 1.5);
+        self.rect_line(x + 4.0, y + 4.0, w - 8.0, h - 8.0, fade(gold, 0.4), 1.0);
+    }
+
+    /// A small diamond, hogwarts' star between words.
+    pub fn diamond(&mut self, x: f32, y: f32, r: f32, color: Color) {
+        let mut path = Path::new();
+        path.move_to(x, y - r);
+        path.line_to(x + r * 0.7, y);
+        path.line_to(x, y + r);
+        path.line_to(x - r * 0.7, y);
+        path.close();
+        self.fill(&path, color);
     }
 
     /// Lines of `text` wrapped in `width`, at most `max_lines` (the last one
@@ -369,11 +421,33 @@ impl Gfx<'_> {
         self.canvas.fill_path(&path, &paint);
     }
 
-    /// A small tag: a framed label in friday, a slanted filled one in cyberpunk.
+    /// A small tag: a framed label in friday, a slanted filled one in
+    /// cyberpunk, a gilded plate in hogwarts.
     pub fn tag(&mut self, x: f32, y: f32, text: &str) -> f32 {
         let style = Type::new(Face::Strong, 14.0).spaced(1.2);
         let w = self.measure(text, style) + 20.0;
-        if self.cyber() {
+        if self.hogwarts() {
+            let plate = Paint::linear_gradient(
+                x,
+                y,
+                x,
+                y + 22.0,
+                Color::rgbaf(0.83, 0.66, 0.29, 0.28),
+                Color::rgbaf(0.83, 0.66, 0.29, 0.08),
+            );
+            let mut path = Path::new();
+            path.rect(x, y, w, 22.0);
+            self.canvas.fill_path(&path, &plate);
+            self.rect_line(x, y, w, 22.0, fade(self.palette.accent, 0.8), 1.0);
+            self.text(
+                x + w / 2.0,
+                y + 11.5,
+                text,
+                Type::new(Face::Strong, 12.5).spaced(1.4),
+                self.palette.accent2,
+                Anchor::MIDDLE_CENTER,
+            );
+        } else if self.cyber() {
             let mut path = Path::new();
             path.move_to(x + 6.0, y);
             path.line_to(x + w, y);
@@ -403,9 +477,13 @@ impl Gfx<'_> {
         w
     }
 
-    /// The small caps line above a title, with its dash.
+    /// The small caps line above a title, with its dash (a gold star in hogwarts).
     pub fn kicker(&mut self, x: f32, y: f32, text: &str, color: Color) {
-        self.rect(x, y + 5.0, 18.0, 2.0, color);
+        if self.hogwarts() {
+            self.diamond(x + 9.0, y + 6.0, 5.0, color);
+        } else {
+            self.rect(x, y + 5.0, 18.0, 2.0, color);
+        }
         self.text(
             x + 26.0,
             y,

@@ -12,12 +12,12 @@ it plays.
 
 It draws straight on the display with the GPU: no X, no Wayland, no browser.
 
-| F.R.I.D.A.Y. | Cyberpunk |
-| :---: | :---: |
-| ![Friday, idle](docs/friday-idle.png) | ![Cyberpunk, idle](docs/cyberpunk-idle.png) |
-| ![Friday, a lamp switched on](docs/friday-light.png) | ![Cyberpunk, a new chapter](docs/cyberpunk-scan.png) |
+| F.R.I.D.A.Y. | Cyberpunk | Hogwarts |
+| :---: | :---: | :---: |
+| ![Friday, idle](docs/friday-idle.png) | ![Cyberpunk, idle](docs/cyberpunk-idle.png) | ![Hogwarts, idle](docs/hogwarts-idle.png) |
+| ![Friday, a lamp switched on](docs/friday-light.png) | ![Cyberpunk, a new chapter](docs/cyberpunk-scan.png) | ![Hogwarts, a lamp switched on](docs/hogwarts-light.png) |
 
-## Two looks
+## Three looks
 
 - **friday** is a HUD after Tony Stark's second AI. A neural network drifts
   behind the panels. Signals run along its links, and a burst fires from the
@@ -25,6 +25,16 @@ It draws straight on the display with the GPU: no X, no Wayland, no browser.
 - **cyberpunk** takes Netwatch's red and yellow. A grid runs to the horizon
   under falling columns of data, scene changes glitch, and the cinema becomes
   a braindance editor with its three tracks.
+- **hogwarts** is the Great Hall at night: old gold on ink, parchment and
+  Gryffindor scarlet. Candles float under an enchanted ceiling, golden dust
+  rises, and every news is written in ink, framed in gilt like the portraits
+  of the castle. A burst is a shower of sparks, and the cinema becomes the
+  Pensieve.
+
+The look can change while Errol runs. When the feed names a look in its
+`settings`, Errol switches to it at once; this is the remote control, meant
+to be set from a home page. Without one, Errol keeps its own (`--look` or
+`ERROL_LOOK`).
 
 ## Scenes
 
@@ -90,7 +100,9 @@ Every field is optional: Errol shows what it gets and hides the rest.
                 "positions": [{"pair": "BTC/USDT", "avg": 60000, "price": 63150}]},
   "disk": {"total": 1430000000000, "used": 980000000000, "free": 450000000000},
   "services": {"up": 18, "total": 18},
-  "errors": {"house": "timeout"}      // sources the feed could not read
+  "errors": {"house": "timeout"},     // sources the feed could not read
+  "settings": {"look": "hogwarts",    // the look to show now; null keeps Errol's own
+               "follow_hub": true}    // for the feed: the home page sets the look when its own changes
 }
 ```
 
@@ -121,7 +133,7 @@ Docker and the stock `vc4-kms-v3d` overlay.
 
 ```sh
 git clone https://github.com/L00rdD/errol && cd errol
-sh deploy/install.sh friday        # or cyberpunk
+sh deploy/install.sh friday        # or cyberpunk, or hogwarts
 ```
 
 The script compiles inside a `rust:slim-trixie` container, so the Pi needs no
@@ -134,7 +146,7 @@ Settings go in `/etc/default/errol`:
 
 | Variable | Default | |
 | :--- | :--- | :--- |
-| `ERROL_LOOK` | `friday` | `friday` or `cyberpunk` |
+| `ERROL_LOOK` | `friday` | `friday`, `cyberpunk` or `hogwarts`; the feed's `settings.look` wins when set |
 | `ERROL_FEED` | `http://localhost/screen.json` | where the feed is |
 | `ERROL_JELLYFIN` | `http://localhost:8096` | where Jellyfin pictures come from |
 | `ERROL_FPS` | `30` | 5 to 60 |
@@ -192,10 +204,11 @@ cargo test --workspace
 
 ## Credits
 
-- Michroma (the Michroma Project Authors) and Rajdhani (Indian Type Foundry), under the SIL
+- Michroma (the Michroma Project Authors), Rajdhani (Indian Type Foundry),
+  Cinzel (the Cinzel Project Authors) and IM Fell English (Igino Marini), under the SIL
   Open Font License (`assets/fonts/OFL-*.txt`).
-- The looks are fan homages to Marvel's F.R.I.D.A.Y. and to Cyberpunk 2077;
-  Errol is the Weasleys' owl.
+- The looks are fan homages to Marvel's F.R.I.D.A.Y., to Cyberpunk 2077 and
+  to Harry Potter's Hogwarts; Errol is the Weasleys' owl.
 - The demo shows posters from [TMDB](https://www.themoviedb.org).
 
 ## License

@@ -21,6 +21,8 @@ impl Ticker {
         let palette = gfx.palette;
         let line = if gfx.cyber() {
             palette.accent
+        } else if gfx.hogwarts() {
+            fade(palette.accent, 0.45)
         } else {
             fade(palette.accent, 0.1)
         };
@@ -82,7 +84,12 @@ impl Ticker {
             ));
         }
         let label_style = Type::new(Face::Strong, 11.0).spaced(1.6);
-        let value_style = Type::new(Face::Body, 12.5).spaced(0.4);
+        // hogwarts writes the news in an italic hand, a little larger
+        let value_style = if gfx.hogwarts() {
+            Type::new(Face::Italic, 14.0)
+        } else {
+            Type::new(Face::Body, 12.5).spaced(0.4)
+        };
         let gap = 46.0;
         let widths: Vec<f32> = items
             .iter()

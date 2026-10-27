@@ -46,6 +46,13 @@ impl Stage {
         }
     }
 
+    /// Changes look without restarting: a new background, and the next frame
+    /// counts as a new scene (flash, burst).
+    pub fn set_look(&mut self, look: crate::look::Look) {
+        self.background = Background::new(look);
+        self.key.clear();
+    }
+
     pub fn draw(&mut self, gfx: &mut Gfx, view: &View, textures: &mut Textures, dt: f32) {
         let key = match &view.scene {
             Scene::Idle => "idle".to_owned(),
@@ -92,11 +99,17 @@ impl Stage {
         header::draw(gfx, view);
         self.ticker.draw(gfx, view, dt);
         flash(gfx, age);
-        scanlines(gfx);
+        if gfx.hogwarts() {
+            // no screen in that world: no scanlines, the dark of a candlelit hall
+            vignette(gfx);
+        } else {
+            scanlines(gfx);
+        }
     }
 }
 
-/// The light (friday) or the coloured bands (cyberpunk) of a change of scene.
+/// The light (friday, hogwarts: candlelight) or the coloured bands (cyberpunk)
+/// of a change of scene.
 fn flash(gfx: &mut Gfx, age: f32) {
     let left = 1.0 - progress(age, 0.6);
     if left <= 0.0 {
@@ -115,6 +128,21 @@ fn flash(gfx: &mut Gfx, age: f32) {
             fade(gfx.palette.accent, 0.35 * left),
         );
     }
+}
+
+/// The corners of the hall fall into darkness.
+fn vignette(gfx: &mut Gfx) {
+    let mut path = Path::new();
+    path.rect(0.0, 0.0, WIDTH, HEIGHT);
+    let dark = femtovg::Paint::radial_gradient(
+        WIDTH / 2.0,
+        HEIGHT / 2.0,
+        220.0,
+        520.0,
+        femtovg::Color::rgbaf(0.0, 0.0, 0.0, 0.0),
+        femtovg::Color::rgbaf(0.02, 0.01, 0.03, 0.55),
+    );
+    gfx.canvas.fill_path(&path, &dark);
 }
 
 /// Fine horizontal lines over everything, like an old monitor.

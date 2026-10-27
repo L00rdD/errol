@@ -1,7 +1,7 @@
 #!/bin/sh
 # Builds Errol on the Raspberry Pi, in a Rust container (no toolchain on the
 # host), and runs it as a service on the HDMI display, as the current user.
-#   sh deploy/install.sh [friday|cyberpunk]
+#   sh deploy/install.sh [friday|cyberpunk|hogwarts]
 # Re-run after a `git pull` to rebuild; with a look, it also switches look.
 # The first build takes about 10 minutes on a Pi 4, later ones a few.
 #

@@ -45,11 +45,16 @@ pub fn unit(a: u64, b: u64) -> f32 {
 }
 
 /// `text` resolving from random glyphs, left to right, over `length`
-/// seconds; the glyphs change 25 times a second.
+/// seconds; the glyphs change 25 times a second. With no glyphs, the letters
+/// appear one after the other, as if written in ink.
 pub fn decode(text: &str, elapsed: f32, length: f32, glyphs: &str) -> String {
     let done = progress(elapsed, length);
     if done >= 1.0 {
         return text.to_owned();
+    }
+    if glyphs.is_empty() {
+        let shown = (text.chars().count() as f32 * done) as usize;
+        return text.chars().take(shown).collect();
     }
     let pool: Vec<char> = glyphs.chars().collect();
     let count = text.chars().count();
@@ -75,6 +80,12 @@ mod tests {
     fn a_decoded_text_ends_as_itself_and_keeps_its_spaces_meanwhile() {
         assert_eq!(decode("Néon allumé", 2.0, 1.0, "01"), "Néon allumé");
         assert_eq!(decode("ab cd", 0.0, 1.0, "#").chars().nth(2), Some(' '));
+    }
+
+    #[test]
+    fn with_no_glyphs_the_text_is_written_letter_by_letter() {
+        assert_eq!(decode("Lumos", 0.5, 1.0, ""), "Lu");
+        assert_eq!(decode("Lumos", 1.0, 1.0, ""), "Lumos");
     }
 
     #[test]

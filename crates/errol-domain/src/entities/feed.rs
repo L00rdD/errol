@@ -20,6 +20,17 @@ pub struct Snapshot {
     pub services: Services,
     /// Sources the feed could not read, with the reason.
     pub warnings: Vec<String>,
+    /// What the user asked of the screen, through the feed (its remote control).
+    pub settings: Settings,
+}
+
+/// Settings the user sets from elsewhere (the home page) and the feed passes on.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Settings {
+    /// The look asked for ("friday", "cyberpunk", "hogwarts"); None leaves the screen's own.
+    pub look: Option<String>,
+    /// The look follows the home page's (the home page sets `look` when it changes).
+    pub follow_hub: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

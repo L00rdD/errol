@@ -16,6 +16,7 @@ use sdl2::keyboard::Keycode;
 use sdl2::video::{FullscreenType, GLProfile};
 
 use crate::Options;
+use crate::look::Look;
 use crate::pictures::Pictures;
 use crate::scenes::{HEIGHT, Stage, WIDTH};
 
@@ -26,6 +27,9 @@ const MICHROMA: &[u8] = include_bytes!("../../../../assets/fonts/Michroma-Regula
 const RAJDHANI_MEDIUM: &[u8] = include_bytes!("../../../../assets/fonts/Rajdhani-Medium.ttf");
 const RAJDHANI_SEMIBOLD: &[u8] = include_bytes!("../../../../assets/fonts/Rajdhani-SemiBold.ttf");
 const RAJDHANI_BOLD: &[u8] = include_bytes!("../../../../assets/fonts/Rajdhani-Bold.ttf");
+const CINZEL: &[u8] = include_bytes!("../../../../assets/fonts/Cinzel.ttf");
+const FELL: &[u8] = include_bytes!("../../../../assets/fonts/IMFellEnglish-Regular.ttf");
+const FELL_ITALIC: &[u8] = include_bytes!("../../../../assets/fonts/IMFellEnglish-Italic.ttf");
 
 pub fn run(options: &Options, observe: &ObserveFeed, pictures: &Pictures) -> Result<(), String> {
     let sdl = sdl2::init()?;
@@ -80,9 +84,13 @@ pub fn run(options: &Options, observe: &ObserveFeed, pictures: &Pictures) -> Res
         medium: font(RAJDHANI_MEDIUM)?,
         semibold: font(RAJDHANI_SEMIBOLD)?,
         bold: font(RAJDHANI_BOLD)?,
+        cinzel: font(CINZEL)?,
+        fell: font(FELL)?,
+        fell_italic: font(FELL_ITALIC)?,
     };
 
-    let mut stage = Stage::new(options.look);
+    let mut look = options.look;
+    let mut stage = Stage::new(look);
     let mut textures = Textures::new(pictures);
     let mut events = sdl.event_pump()?;
     let start = Instant::now();
@@ -118,14 +126,24 @@ pub fn run(options: &Options, observe: &ObserveFeed, pictures: &Pictures) -> Res
         canvas.scale(scale, scale);
         canvas.scissor(0.0, 0.0, WIDTH, HEIGHT);
         let view = observe.view();
+        // the feed may ask for another look (the home page's remote control)
+        let asked = view
+            .snapshot
+            .as_ref()
+            .and_then(|snapshot| snapshot.settings.look.as_deref());
+        let wanted = Look::choose(asked, options.look);
+        if wanted != look {
+            look = wanted;
+            stage.set_look(look);
+        }
         let t = start.elapsed().as_secs_f32();
         let dt = tick.duration_since(last).as_secs_f32().min(0.1);
         last = tick;
         let mut gfx = Gfx {
             canvas: &mut canvas,
             fonts: &fonts,
-            look: options.look,
-            palette: options.look.palette(),
+            look,
+            palette: look.palette(),
             t,
         };
         stage.draw(&mut gfx, &view, &mut textures, dt);

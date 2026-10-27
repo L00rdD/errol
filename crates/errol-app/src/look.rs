@@ -1,6 +1,7 @@
-//! The two looks, with the colours of the hub's theme kit
-//! (home/site/theme/theme.css): friday (Reactor's cyan and amber, a neural HUD)
-//! and cyberpunk (Netwatch red, yellow and cyan, braindance editor).
+//! The three looks, with the colours of the home page's theme kit: friday
+//! (cyan and amber, a neural HUD), cyberpunk (Netwatch red, yellow and cyan,
+//! braindance editor) and hogwarts (old gold on ink, parchment, Gryffindor
+//! scarlet, the candles of the Great Hall).
 
 use femtovg::Color;
 
@@ -8,6 +9,7 @@ use femtovg::Color;
 pub enum Look {
     Friday,
     Cyberpunk,
+    Hogwarts,
 }
 
 impl Look {
@@ -15,8 +17,16 @@ impl Look {
         match name {
             "friday" | "reactor" => Some(Self::Friday),
             "cyberpunk" => Some(Self::Cyberpunk),
+            "hogwarts" => Some(Self::Hogwarts),
             _ => None,
         }
+    }
+
+    /// The look to draw: the one the feed asks for (the user's remote control,
+    /// set from the home page) when it names a known look, else `default`
+    /// (`--look` or `ERROL_LOOK`).
+    pub fn choose(asked: Option<&str>, default: Self) -> Self {
+        asked.and_then(Self::parse).unwrap_or(default)
     }
 
     pub fn palette(self) -> Palette {
@@ -39,6 +49,15 @@ impl Look {
                 hot: rgb(0xf3e600),
                 ok: rgb(0x39ff88),
             },
+            Self::Hogwarts => Palette {
+                bg: rgb(0x0b0a12),
+                accent: rgb(0xd4a849),
+                accent2: rgb(0xf3e3b3),
+                text: rgb(0xecdfc0),
+                muted: rgb(0xa8977a),
+                hot: rgb(0xb3242b),
+                ok: rgb(0x6fbf7f),
+            },
         }
     }
 }
@@ -53,7 +72,7 @@ pub struct Palette {
     pub accent2: Color,
     pub text: Color,
     pub muted: Color,
-    /// Alerts in friday, the big yellow in cyberpunk.
+    /// Alerts in friday, the big yellow in cyberpunk, Gryffindor scarlet in hogwarts.
     pub hot: Color,
     pub ok: Color,
 }
@@ -76,4 +95,23 @@ pub fn mix(a: Color, b: Color, k: f32) -> Color {
         a.b + (b.b - a.b) * k,
         a.a + (b.a - a.a) * k,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_look_the_feed_asks_for_wins() {
+        assert_eq!(Look::choose(Some("hogwarts"), Look::Friday), Look::Hogwarts);
+    }
+
+    #[test]
+    fn no_look_or_an_unknown_one_keeps_the_default() {
+        assert_eq!(Look::choose(None, Look::Cyberpunk), Look::Cyberpunk);
+        assert_eq!(
+            Look::choose(Some("slytherin"), Look::Cyberpunk),
+            Look::Cyberpunk
+        );
+    }
 }
