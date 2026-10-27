@@ -497,6 +497,19 @@ fn check(gfx: &mut Gfx, age: f32) {
 #[allow(clippy::many_single_char_names)] // a box: x, y, w, h
 pub fn poster(gfx: &mut Gfx, image: femtovg::ImageId, x: f32, y: f32, w: f32, h: f32, age: f32) {
     let palette = gfx.palette;
+    if gfx.hogwarts() && gfx.hall.is_some() {
+        // a portrait of the castle: the picture in its carved gilt frame,
+        // under the old varnish
+        gfx.halo(
+            x + w / 2.0,
+            y + h / 2.0,
+            w * 1.1,
+            fade(palette.accent, 0.14),
+        );
+        gfx.picture(image, x, y, w, h, ease_out(progress(age, 0.6)));
+        gfx.portrait(x, y, w, h, 1.0);
+        return;
+    }
     let sway = 1.0 - 0.05 * (gfx.t * TAU / 6.0).sin().abs();
     gfx.canvas.save();
     gfx.canvas.translate(x + w / 2.0, 0.0);

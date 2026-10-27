@@ -92,6 +92,8 @@ pub struct Gfx<'a> {
     pub palette: Palette,
     /// Seconds since the screen started (drives every loop).
     pub t: f32,
+    /// The Great Hall's baked sprites, while the look is hogwarts.
+    pub hall: Option<&'a super::Hall>,
 }
 
 impl Gfx<'_> {

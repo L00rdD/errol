@@ -3,7 +3,10 @@
 //! draws on OpenGL ES 3 (Pi) or OpenGL 3.3 (Mac). The 800 × 480 stage is
 //! scaled to fit whatever the display is.
 
+mod crests;
 mod gfx;
+mod hall;
+mod svg;
 mod textures;
 
 use std::time::{Duration, Instant};
@@ -21,6 +24,7 @@ use crate::pictures::Pictures;
 use crate::scenes::{HEIGHT, Stage, WIDTH};
 
 pub use gfx::{Anchor, Face, Fonts, Gfx, Type};
+pub use hall::{CANDLE_HEIGHTS, FLAME_BASE, Hall, House, WICK};
 pub use textures::Textures;
 
 const MICHROMA: &[u8] = include_bytes!("../../../../assets/fonts/Michroma-Regular.ttf");
@@ -90,6 +94,9 @@ pub fn run(options: &Options, observe: &ObserveFeed, pictures: &Pictures) -> Res
     };
 
     let mut look = options.look;
+    // the Great Hall's sprites, baked the first time the look is hogwarts
+    let mut hall: Option<Hall> = None;
+    let mut hall_failed = false;
     let mut stage = Stage::new(look);
     let mut textures = Textures::new(pictures);
     let mut events = sdl.event_pump()?;
@@ -114,6 +121,19 @@ pub fn run(options: &Options, observe: &ObserveFeed, pictures: &Pictures) -> Res
         let (logical, _) = window.size();
         let dpi = width as f32 / logical.max(1) as f32;
         canvas.set_size(width, height, dpi);
+        if look == Look::Hogwarts && hall.is_none() && !hall_failed {
+            match Hall::bake(&mut canvas, &fonts) {
+                Ok(baked) => {
+                    // the sprites are drawn now, before anything uses them
+                    canvas.flush();
+                    hall = Some(baked);
+                }
+                Err(error) => {
+                    eprintln!("errol: {error}");
+                    hall_failed = true;
+                }
+            }
+        }
         canvas.clear_rect(0, 0, width, height, Color::black());
         // fit the stage, centred
         let (screen_w, screen_h) = (width as f32 / dpi, height as f32 / dpi);
@@ -145,6 +165,7 @@ pub fn run(options: &Options, observe: &ObserveFeed, pictures: &Pictures) -> Res
             look,
             palette: look.palette(),
             t,
+            hall: hall.as_ref().filter(|_| look == Look::Hogwarts),
         };
         stage.draw(&mut gfx, &view, &mut textures, dt);
         canvas.restore();

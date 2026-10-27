@@ -10,8 +10,8 @@ use femtovg::Color;
 use super::text;
 use super::{BOTTOM, TOP};
 use crate::anim::{decode, ease_out, progress};
-use crate::look::{fade, mix};
-use crate::render::{Anchor, Face, Gfx, Textures, Type};
+use crate::look::{Palette, fade, mix, rgb};
+use crate::render::{Anchor, Face, Gfx, House, Textures, Type};
 
 /// Seconds a card stays.
 const CARD_TIME: f32 = 12.0;
@@ -30,6 +30,43 @@ enum Card {
     Downloads,
     Recent,
     Server,
+}
+
+impl Card {
+    /// The house whose seal (and hourglass) the card wears in hogwarts.
+    fn house(self) -> House {
+        match self {
+            Self::OnePiece | Self::Recent => House::Gryffindor,
+            Self::Portfolio => House::Slytherin,
+            Self::Downloads | Self::Server => House::Ravenclaw,
+            Self::House => House::Hufflepuff,
+        }
+    }
+
+    /// How askew the sheet lies on the table, in degrees.
+    fn tilt(self) -> f32 {
+        match self {
+            Self::OnePiece => -0.5,
+            Self::Portfolio => 0.4,
+            Self::House => -0.3,
+            Self::Downloads => 0.6,
+            Self::Recent => -0.6,
+            Self::Server => 0.3,
+        }
+    }
+}
+
+/// Ink on parchment: the colours of the cards in hogwarts.
+fn ink() -> Palette {
+    Palette {
+        bg: rgb(0xe6cf9c),
+        accent: rgb(0x7b4f14),
+        accent2: rgb(0xc28a26),
+        text: rgb(0x2b1d0e),
+        muted: rgb(0x6a5232),
+        hot: rgb(0xa3211f),
+        ok: rgb(0x2d6a36),
+    }
 }
 
 #[derive(Default)]
@@ -210,10 +247,22 @@ fn core(gfx: &mut Gfx, view: &View) {
 }
 
 /// The frame of a card: corner brackets in friday, a cut panel in cyberpunk,
-/// a portrait's double gilt rule over warm dark wood in hogwarts.
-fn frame(gfx: &mut Gfx, x: f32) {
+/// a parchment held by a wax seal in hogwarts (a double gilt rule over dark
+/// wood if the Great Hall's sprites are missing).
+fn frame(gfx: &mut Gfx, x: f32, card: Card) {
     let palette = gfx.palette;
-    if gfx.hogwarts() {
+    if gfx.hogwarts() && gfx.hall.is_some() {
+        // the sheet lies a little askew on the table; the ink stays square
+        // (turned text would be resampled, and blur)
+        let (cx, cy) = (x + CARD_W / 2.0, CARD_Y + CARD_H / 2.0);
+        gfx.canvas.save();
+        gfx.canvas.translate(cx, cy);
+        gfx.canvas.rotate(card.tilt().to_radians());
+        gfx.canvas.translate(-cx, -cy);
+        gfx.parchment(x, CARD_Y, CARD_W, CARD_H);
+        gfx.seal(card.house(), x + CARD_W - 46.0, CARD_Y + 4.0, 50.0, 12.0);
+        gfx.canvas.restore();
+    } else if gfx.hogwarts() {
         let mut path = femtovg::Path::new();
         path.rect(x, CARD_Y, CARD_W, CARD_H);
         let paint = femtovg::Paint::linear_gradient(
@@ -406,7 +455,12 @@ fn draw_card(
     gfx.canvas.save();
     gfx.canvas.set_global_alpha(alpha);
     let x = CARD_X + shift;
-    frame(gfx, x);
+    let parchment = gfx.hogwarts() && gfx.hall.is_some();
+    frame(gfx, x, card);
+    let saved = gfx.palette;
+    if parchment {
+        gfx.palette = ink();
+    }
     let palette = gfx.palette;
     let kicker = if gfx.cyber() {
         palette.hot
@@ -441,7 +495,25 @@ fn draw_card(
                         (left_secs % 60, "SEC"),
                     ];
                     let y = top + 96.0 + used;
-                    let w = (CARD_W - 44.0 - 30.0) / 4.0;
+                    // in hogwarts, an hourglass counts the week down on the right
+                    let room = if parchment {
+                        CARD_W - 44.0 - 84.0
+                    } else {
+                        CARD_W - 44.0
+                    };
+                    let w = (room - 30.0) / 4.0;
+                    if parchment {
+                        let week = 7.0 * 86_400.0;
+                        let fallen = 1.0 - (left_secs as f32 / week).min(1.0);
+                        gfx.hourglass(
+                            card.house(),
+                            left + CARD_W - 44.0 - 62.0,
+                            top + 128.0,
+                            160.0,
+                            fallen,
+                            true,
+                        );
+                    }
                     for (index, (value, label)) in parts.iter().enumerate() {
                         let bx = left + index as f32 * (w + 10.0);
                         gfx.rect_line(bx, y, w, 58.0, fade(palette.accent, 0.15), 1.0);
@@ -664,14 +736,19 @@ fn draw_card(
         Card::Recent => {
             gfx.kicker(left, top, "Ajouté récemment", kicker);
             let mut bx = left;
+            // in hogwarts, small portraits in gilt frames: a little narrower
+            let (w, h, gap) = if parchment {
+                (88.0, 132.0, 26.0)
+            } else {
+                (100.0, 150.0, 14.0)
+            };
             for import in snapshot
                 .recent
                 .iter()
                 .filter(|import| import.poster.is_some())
                 .take(4)
             {
-                let (w, h) = (100.0, 150.0);
-                let by = top + 34.0;
+                let by = top + if parchment { 44.0 } else { 34.0 };
                 gfx.rect(bx, by, w, h, fade(palette.accent, 0.06));
                 if let Some(image) = import
                     .poster
@@ -680,7 +757,11 @@ fn draw_card(
                 {
                     gfx.picture(image, bx, by, w, h, 1.0);
                 }
-                gfx.rect_line(bx, by, w, h, fade(palette.accent, 0.3), 1.0);
+                if parchment {
+                    gfx.portrait(bx, by, w, h, 1.0);
+                } else {
+                    gfx.rect_line(bx, by, w, h, fade(palette.accent, 0.3), 1.0);
+                }
                 let caption = match import.kind {
                     MediaKind::Episode => format!(
                         "{} · {}x{:02}",
@@ -691,17 +772,18 @@ fn draw_card(
                     MediaKind::Movie => import.title.clone(),
                 };
                 let lines = gfx.wrap(&caption, w, Type::new(Face::Body, 13.0), 2);
+                let below = if parchment { 16.0 } else { 8.0 };
                 for (index, line) in lines.iter().enumerate() {
                     gfx.text(
                         bx,
-                        by + h + 8.0 + index as f32 * 15.0,
+                        by + h + below + index as f32 * 15.0,
                         line,
                         Type::new(Face::Body, 13.0),
                         palette.muted,
                         Anchor::TOP_LEFT,
                     );
                 }
-                bx += w + 14.0;
+                bx += w + gap;
             }
         }
         Card::Server => {
@@ -722,18 +804,28 @@ fn draw_card(
                     palette.muted,
                     Anchor::TOP_LEFT,
                 );
-                gauge(
-                    gfx,
-                    left,
-                    top + 116.0,
-                    CARD_W - 44.0,
-                    disk.used as f64 / disk.total.max(1) as f64 * 100.0,
-                );
+                let used = disk.used as f64 / disk.total.max(1) as f64;
+                // in hogwarts the space used is an hourglass of gems, the rows
+                // go under it
+                let below = if parchment {
+                    gfx.hourglass(
+                        card.house(),
+                        left + CARD_W - 44.0 - 68.0,
+                        top + 4.0,
+                        176.0,
+                        used as f32,
+                        false,
+                    );
+                    48.0
+                } else {
+                    gauge(gfx, left, top + 116.0, CARD_W - 44.0, used * 100.0);
+                    0.0
+                };
                 let services = snapshot.services;
                 row(
                     gfx,
                     left,
-                    top + 146.0,
+                    top + 146.0 + below,
                     "Services en ligne",
                     &format!("{} / {}", services.up, services.total),
                     palette.text,
@@ -745,7 +837,7 @@ fn draw_card(
                 {
                     gfx.paragraph(
                         left,
-                        top + 186.0,
+                        top + 186.0 + below,
                         warning,
                         CARD_W - 44.0,
                         Type::new(Face::Body, 14.0),
@@ -758,4 +850,5 @@ fn draw_card(
         }
     }
     gfx.canvas.restore();
+    gfx.palette = saved;
 }

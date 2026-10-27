@@ -25,11 +25,16 @@ It draws straight on the display with the GPU: no X, no Wayland, no browser.
 - **cyberpunk** takes Netwatch's red and yellow. A grid runs to the horizon
   under falling columns of data, scene changes glitch, and the cinema becomes
   a braindance editor with its three tracks.
-- **hogwarts** is the Great Hall at night: old gold on ink, parchment and
-  Gryffindor scarlet. Candles float under an enchanted ceiling, golden dust
-  rises, and every news is written in ink, framed in gilt like the portraits
-  of the castle. A burst is a shower of sparks, and the cinema becomes the
-  Pensieve.
+- **hogwarts** is the Great Hall at night, after the hub's own Great Hall.
+  Under the enchanted ceiling, with its stars, drifting clouds and the odd
+  shooting star, ivory candles float at three depths, their flames
+  flickering. The four house banners sway with their crests. The cards are
+  parchments with torn edges, a curled corner and a wax seal, written in ink.
+  The next chapter's countdown and the server's space become house-point
+  hourglasses filled with gems. Posters hang in carved gilt frames, and the
+  cinema becomes the Pensieve. Now and then a candle gutters, a draught bends
+  every flame and stirs the banners, or the Golden Snitch darts across. When
+  news arrives, the owl post flies through and drops its letter.
 
 The look can change while Errol runs. When the feed names a look in its
 `settings`, Errol switches to it at once; this is the remote control, meant
@@ -193,6 +198,12 @@ The code is in three layers:
 
 Everything is synchronous. The only `unsafe` block hands SDL's GL functions to
 femtovg.
+
+The Great Hall is drawn once, when the look starts. The sky, the stars, the
+clouds, the candles' wax, a flame, the banners, the parchment, the seals, the
+gilt frame, the hourglasses and the owl are baked into GPU images
+(`render/hall.rs`, after the hub's own SVG). A frame then only places images
+with a transform, so the look costs no more than the others.
 
 Before a commit:
 
