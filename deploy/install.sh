@@ -15,7 +15,10 @@ docker volume create errol-cargo >/dev/null
 docker run --rm -v "$PWD:/src" -v errol-cargo:/usr/local/cargo/registry -w /src rust:slim-trixie sh -c \
   "apt-get update -qq && apt-get install -y -qq libsdl2-dev pkg-config >/dev/null \
    && cargo build --release -p errol-app && chown -R $(id -u):$(id -g) target"
-sudo apt-get install -y -qq libsdl2-2.0-0 >/dev/null
+# the GL libraries too, marked as wanted: they often came with something else
+# (a browser) and an apt autoremove would take them, leaving "EGL not initialized"
+sudo apt-get install -y -qq libsdl2-2.0-0 libgles2 libegl1 libegl-mesa0 libgbm1 >/dev/null
+sudo apt-mark manual libsdl2-2.0-0 libgles2 libegl1 libegl-mesa0 libgbm1 >/dev/null
 sudo install -m 755 target/release/errol /usr/local/bin/errol
 if [ -n "$1" ]; then
   # keep the other settings, replace the look
