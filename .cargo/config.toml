@@ -1,0 +1,3 @@
+# Homebrew's SDL2 (sdl2-compat) for the preview on a Mac
+[target.aarch64-apple-darwin]
+rustflags = ["-L", "/opt/homebrew/lib"]

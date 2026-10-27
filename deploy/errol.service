@@ -1,0 +1,21 @@
+# Errol: draws straight on the HDMI display through KMS/DRM and the GPU
+# (OpenGL ES), no X, no Wayland, no browser. Installed by deploy/install.sh,
+# which fills in the user; settings in /etc/default/errol (ERROL_LOOK,
+# ERROL_FEED, ERROL_JELLYFIN, ERROL_FPS).
+[Unit]
+Description=Errol, the living-room screen
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+User=@USER@
+SupplementaryGroups=video render input
+Environment=SDL_VIDEODRIVER=kmsdrm
+EnvironmentFile=-/etc/default/errol
+ExecStart=/usr/local/bin/errol
+Restart=always
+RestartSec=5
+Nice=5
+
+[Install]
+WantedBy=multi-user.target

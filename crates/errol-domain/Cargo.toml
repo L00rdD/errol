@@ -1,0 +1,13 @@
+[package]
+name = "errol-domain"
+description = "Domain layer of Errol: entities, ports, the scene director and use cases. No I/O."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+
+[lints]
+workspace = true

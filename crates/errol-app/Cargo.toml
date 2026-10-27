@@ -1,0 +1,23 @@
+[package]
+name = "errol-app"
+description = "Presentation layer of Errol: wiring, poller, and the GPU renderer of both looks."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "errol"
+path = "src/main.rs"
+
+[dependencies]
+errol-domain.workspace = true
+errol-data.workspace = true
+chrono.workspace = true
+femtovg.workspace = true
+glow.workspace = true
+sdl2.workspace = true
+image.workspace = true
+
+[lints]
+workspace = true
