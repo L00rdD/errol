@@ -1,5 +1,6 @@
-//! The idle recap: a clock in its rings, and a carousel of cards (One Piece,
-//! a trading bot, the house, downloads, the latest additions, the server).
+//! The idle recap: a clock in its rings (the Time-Turner on the Map), and a
+//! carousel of cards (One Piece, a trading bot, the house, downloads, the
+//! latest additions, the server), rooms of the castle on the Map.
 
 use std::f32::consts::TAU;
 
@@ -7,11 +8,10 @@ use errol_domain::entities::{MediaKind, Snapshot};
 use errol_domain::usecases::View;
 use femtovg::Color;
 
-use super::text;
-use super::{BOTTOM, TOP};
+use super::{BOTTOM, TOP, text, turner};
 use crate::anim::{decode, ease_out, progress};
-use crate::look::{Palette, fade, mix, rgb};
-use crate::render::{Anchor, Face, Gfx, House, Textures, Type};
+use crate::look::{fade, mix};
+use crate::render::{Anchor, Face, Finish, Gfx, Textures, Type, ink};
 
 /// Seconds a card stays.
 const CARD_TIME: f32 = 12.0;
@@ -21,6 +21,13 @@ const CARD_X: f32 = 286.0;
 const CARD_Y: f32 = TOP + 26.0;
 const CARD_W: f32 = 490.0;
 const CARD_H: f32 = BOTTOM - 40.0 - CARD_Y;
+/// A box: x, y, w, h.
+pub type Box = (f32, f32, f32, f32);
+/// The Time-Turner's centre and scale on the Map, and the box it stands in
+/// (the footsteps leave from its door).
+const TURNER: (f32, f32, f32) = (140.0, 216.0, 0.6);
+const TURNER_BOX: Box = (31.0, 75.0, 218.0, 349.0);
+const OATH: &str = "« Je jure solennellement que mes intentions sont mauvaises. »";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Card {
@@ -33,39 +40,16 @@ enum Card {
 }
 
 impl Card {
-    /// The house whose seal (and hourglass) the card wears in hogwarts.
-    fn house(self) -> House {
+    /// The room of the castle the card is, on the Map.
+    fn room(self) -> &'static str {
         match self {
-            Self::OnePiece | Self::Recent => House::Gryffindor,
-            Self::Portfolio => House::Slytherin,
-            Self::Downloads | Self::Server => House::Ravenclaw,
-            Self::House => House::Hufflepuff,
+            Self::OnePiece => "Bibliothèque",
+            Self::Portfolio => "Cachots",
+            Self::House => "Grande Salle",
+            Self::Downloads => "Volière",
+            Self::Recent => "Salle sur Demande",
+            Self::Server => "Tour d'astronomie",
         }
-    }
-
-    /// How askew the sheet lies on the table, in degrees.
-    fn tilt(self) -> f32 {
-        match self {
-            Self::OnePiece => -0.5,
-            Self::Portfolio => 0.4,
-            Self::House => -0.3,
-            Self::Downloads => 0.6,
-            Self::Recent => -0.6,
-            Self::Server => 0.3,
-        }
-    }
-}
-
-/// Ink on parchment: the colours of the cards in hogwarts.
-fn ink() -> Palette {
-    Palette {
-        bg: rgb(0xe6cf9c),
-        accent: rgb(0x7b4f14),
-        accent2: rgb(0xc28a26),
-        text: rgb(0x2b1d0e),
-        muted: rgb(0x6a5232),
-        hot: rgb(0xa3211f),
-        ok: rgb(0x2d6a36),
     }
 }
 
@@ -75,6 +59,8 @@ pub struct Carousel {
     turn: usize,
     since: f32,
     previous: Option<Card>,
+    /// The carousel just turned: footsteps are due from the clock to the card.
+    walk_due: bool,
 }
 
 fn cards(snapshot: &Snapshot) -> Vec<Card> {
@@ -114,6 +100,7 @@ impl Carousel {
             self.previous = list.get(self.turn % list.len()).copied();
             self.turn += 1;
             self.since = gfx.t;
+            self.walk_due = list.len() > 1;
         }
         let card = list[self.turn % list.len()];
         let age = gfx.t - self.since;
@@ -141,7 +128,8 @@ impl Carousel {
             age,
             textures,
         );
-        // one dash per card, the current one lit
+        // one dash per card, the current one lit; on the Map, in ink
+        let dim = if gfx.hogwarts() { 0.3 } else { 0.15 };
         for index in 0..list.len() {
             let dash_x = 776.0 - (list.len() - index) as f32 * 24.0;
             let current = index == self.turn % list.len();
@@ -153,17 +141,73 @@ impl Carousel {
                 if current {
                     gfx.palette.accent
                 } else {
-                    fade(gfx.palette.accent, 0.15)
+                    fade(gfx.palette.accent, dim)
                 },
             );
         }
     }
+
+    /// The boxes footsteps should walk between, once, after the carousel
+    /// turned: from the clock's to the card's.
+    pub fn take_walk(&mut self) -> Option<(Box, Box)> {
+        if !std::mem::take(&mut self.walk_due) {
+            return None;
+        }
+        Some((TURNER_BOX, (CARD_X, CARD_Y, CARD_W, CARD_H)))
+    }
 }
 
-/// The clock in its turning rings.
+/// The clock in its turning rings; the Time-Turner on the Map, the time in
+/// words under it, and the Map's oath.
 fn core(gfx: &mut Gfx, view: &View) {
-    let (x, y) = (140.0, f32::midpoint(TOP, BOTTOM));
     let palette = gfx.palette;
+    if gfx.hogwarts() {
+        let local = text::local(view.now);
+        let (hour, minute) = (
+            chrono::Timelike::hour(&local),
+            chrono::Timelike::minute(&local),
+        );
+        let gone = (minute * 60 + chrono::Timelike::second(&local)) as f32 / 3600.0;
+        let (x, y, scale) = TURNER;
+        turner::draw(gfx, x, y, scale, (hour % 12) as usize, gone);
+        gfx.text(
+            x,
+            y + 126.0,
+            &text::in_words(hour, minute),
+            Type::new(Face::Italic, 19.0),
+            palette.accent,
+            Anchor::MIDDLE_CENTER,
+        );
+        gfx.text(
+            x,
+            y + 146.0,
+            &text::clock(view.now),
+            Type::new(Face::Body, 11.0).spaced(2.0),
+            palette.accent2,
+            Anchor::MIDDLE_CENTER,
+        );
+        gfx.text(
+            x,
+            y + 164.0,
+            &text::date(view.now),
+            Type::new(Face::Italic, 13.0),
+            palette.muted,
+            Anchor::MIDDLE_CENTER,
+        );
+        let oath = Type::new(Face::Italic, 11.5);
+        for (index, line) in gfx.wrap(OATH, 250.0, oath, 2).iter().enumerate() {
+            gfx.text(
+                x,
+                y + 186.0 + index as f32 * 14.0,
+                line,
+                oath,
+                fade(palette.muted, 0.85),
+                Anchor::MIDDLE_CENTER,
+            );
+        }
+        return;
+    }
+    let (x, y) = (140.0, f32::midpoint(TOP, BOTTOM));
     let t = gfx.t;
     let ring = if gfx.cyber() {
         palette.hot
@@ -247,34 +291,12 @@ fn core(gfx: &mut Gfx, view: &View) {
 }
 
 /// The frame of a card: corner brackets in friday, a cut panel in cyberpunk,
-/// a parchment held by a wax seal in hogwarts (a double gilt rule over dark
-/// wood if the Great Hall's sprites are missing).
+/// a room of the castle with its name on a ribbon in hogwarts.
 fn frame(gfx: &mut Gfx, x: f32, card: Card) {
     let palette = gfx.palette;
-    if gfx.hogwarts() && gfx.hall.is_some() {
-        // the sheet lies a little askew on the table; the ink stays square
-        // (turned text would be resampled, and blur)
-        let (cx, cy) = (x + CARD_W / 2.0, CARD_Y + CARD_H / 2.0);
-        gfx.canvas.save();
-        gfx.canvas.translate(cx, cy);
-        gfx.canvas.rotate(card.tilt().to_radians());
-        gfx.canvas.translate(-cx, -cy);
-        gfx.parchment(x, CARD_Y, CARD_W, CARD_H);
-        gfx.seal(card.house(), x + CARD_W - 46.0, CARD_Y + 4.0, 50.0, 12.0);
-        gfx.canvas.restore();
-    } else if gfx.hogwarts() {
-        let mut path = femtovg::Path::new();
-        path.rect(x, CARD_Y, CARD_W, CARD_H);
-        let paint = femtovg::Paint::linear_gradient(
-            x,
-            CARD_Y,
-            x,
-            CARD_Y + CARD_H,
-            Color::rgbaf(0.16, 0.12, 0.08, 0.86),
-            Color::rgbaf(0.09, 0.07, 0.06, 0.86),
-        );
-        gfx.canvas.fill_path(&path, &paint);
-        gfx.gilt_frame(x, CARD_Y, CARD_W, CARD_H);
+    if gfx.hogwarts() {
+        gfx.room(x, CARD_Y, CARD_W, CARD_H);
+        gfx.ribbon(x + CARD_W / 2.0, CARD_Y - 9.0, card.room(), 1.0);
     } else if gfx.cyber() {
         let path = Gfx::cut_box(x, CARD_Y, CARD_W, CARD_H, 22.0);
         let paint = femtovg::Paint::linear_gradient(
@@ -394,20 +416,29 @@ fn row(gfx: &mut Gfx, x: f32, y: f32, label: &str, value: &str, colour: Color) {
         colour,
         Anchor::TOP_RIGHT,
     );
-    let mut path = femtovg::Path::new();
-    path.move_to(x, y + 24.0);
-    path.line_to(x + CARD_W - 44.0, y + 24.0);
-    let paint = femtovg::Paint::color(fade(palette.accent, 0.12))
-        .with_line_width(1.0)
-        .with_line_dash(&[3.0, 3.0]);
-    gfx.canvas.stroke_path(&path, &paint);
+    let rule = fade(palette.accent, if gfx.hogwarts() { 0.45 } else { 0.12 });
+    gfx.dashed_rule(x, y + 24.0, CARD_W - 44.0, rule);
 }
 
-/// A bar filled to `percent`, with a light running along it.
+/// A bar filled to `percent`, with a light running along it; in ink on the
+/// Map, a rule filled with sand.
 pub fn gauge(gfx: &mut Gfx, x: f32, y: f32, w: f32, percent: f64) {
     let palette = gfx.palette;
-    gfx.rect(x, y, w, 8.0, fade(palette.accent, 0.08));
     let filled = w * (percent as f32 / 100.0).clamp(0.0, 1.0);
+    if gfx.hogwarts() {
+        gfx.rect(x, y, filled, 12.0, turner::sand());
+        gfx.rect_line(x, y, w, 12.0, palette.accent, 1.0);
+        gfx.rect_line(
+            x + 3.0,
+            y + 3.0,
+            w - 6.0,
+            6.0,
+            fade(palette.accent, 0.35),
+            1.0,
+        );
+        return;
+    }
+    gfx.rect(x, y, w, 8.0, fade(palette.accent, 0.08));
     gfx.gradient_rect(
         x,
         y,
@@ -438,6 +469,81 @@ pub fn gauge(gfx: &mut Gfx, x: f32, y: f32, w: f32, percent: f64) {
     gfx.canvas.fill_path(&path, &glare);
 }
 
+/// A plate of a Quidditch scoreboard: ink, a gold rule inside, its figure in
+/// gold; unlit, it fades into the parchment.
+fn plate(gfx: &mut Gfx, x: f32, y: f32, w: f32, h: f32, value: &str, size: f32, lit: bool) {
+    let (board, rule, figure) = if lit {
+        (ink::news_ink(), fade(turner::sand(), 0.8), turner::sand())
+    } else {
+        (
+            fade(ink::ink(), 0.28),
+            fade(turner::sand(), 0.35),
+            fade(ink::ribbon(), 0.75),
+        )
+    };
+    gfx.rect(x, y, w, h, board);
+    gfx.rect_line(x + 3.0, y + 3.0, w - 6.0, h - 6.0, rule, 1.0);
+    let style = Type::new(Face::Body, size);
+    let value = gfx.wrap(value, w - 14.0, style, 1);
+    gfx.text(
+        x + w / 2.0,
+        y + h / 2.0 + 1.0,
+        value.first().map_or("", String::as_str),
+        style,
+        figure,
+        Anchor::MIDDLE_CENTER,
+    );
+}
+
+/// The beam of a Quidditch scoreboard across `w`, with `plates` hung under
+/// it on their rings (figure, name, lit), sized for `columns` of them; the
+/// names in red under the plates, in muted ink when unlit. Returns the
+/// height used.
+fn scoreboard(
+    gfx: &mut Gfx,
+    x: f32,
+    y: f32,
+    w: f32,
+    plates: &[(String, String, bool)],
+    columns: usize,
+) -> f32 {
+    let ink = ink::ink();
+    gfx.rect(x, y, w, 3.0, ink);
+    gfx.rect(x, y + 5.0, w, 1.0, ink);
+    let gap = 10.0;
+    let columns = columns.max(plates.len()) as f32;
+    let pw = (w - gap * (columns - 1.0)) / columns;
+    let (top, h) = (y + 14.0, 48.0);
+    for (index, (figure, name, lit)) in plates.iter().enumerate() {
+        let px = x + index as f32 * (pw + gap);
+        let mut rings = femtovg::Path::new();
+        for rx in [px + 12.0, px + pw - 12.0] {
+            rings.move_to(rx, y + 6.0);
+            rings.line_to(rx, top);
+            rings.circle(rx, y + 9.5, 2.2);
+        }
+        gfx.stroke(&rings, ink, 1.3);
+        if *lit {
+            gfx.halo(
+                px + pw / 2.0,
+                top + h / 2.0,
+                pw * 0.7,
+                fade(turner::sand(), 0.22),
+            );
+        }
+        plate(gfx, px, top, pw, h, figure, 24.0, *lit);
+        gfx.text(
+            px + pw / 2.0,
+            top + h + 7.0,
+            &name.to_uppercase(),
+            Type::new(Face::Body, 10.5).spaced(2.0),
+            if *lit { ink::red() } else { gfx.palette.muted },
+            Anchor::TOP_CENTER,
+        );
+    }
+    14.0 + h + 7.0 + 14.0
+}
+
 #[allow(clippy::too_many_arguments)]
 fn draw_card(
     gfx: &mut Gfx,
@@ -455,13 +561,10 @@ fn draw_card(
     gfx.canvas.save();
     gfx.canvas.set_global_alpha(gfx.alpha * alpha);
     let x = CARD_X + shift;
-    let parchment = gfx.hogwarts() && gfx.hall.is_some();
+    let map = gfx.hogwarts();
     frame(gfx, x, card);
-    let saved = gfx.palette;
-    if parchment {
-        gfx.palette = ink();
-    }
     let palette = gfx.palette;
+    let finish = if map { Finish::Print } else { Finish::Plain };
     let kicker = if gfx.cyber() {
         palette.hot
     } else {
@@ -495,26 +598,35 @@ fn draw_card(
                         (left_secs % 60, "SEC"),
                     ];
                     let y = top + 96.0 + used;
-                    // in hogwarts, an hourglass counts the week down on the right
-                    let room = if parchment {
-                        CARD_W - 44.0 - 84.0
+                    // on the Map, an hourglass counts the week down on the right
+                    let room = if map {
+                        CARD_W - 44.0 - 76.0
                     } else {
                         CARD_W - 44.0
                     };
                     let w = (room - 30.0) / 4.0;
-                    if parchment {
+                    if map {
                         let week = 7.0 * 86_400.0;
                         let fallen = 1.0 - (left_secs as f32 / week).min(1.0);
-                        gfx.hourglass(
-                            card.house(),
+                        turner::hourglass(
+                            gfx,
                             left + CARD_W - 44.0 - 62.0,
-                            top + 128.0,
-                            160.0,
+                            top + 118.0,
+                            0.75,
                             fallen,
-                            true,
                         );
                     }
-                    for (index, (value, label)) in parts.iter().enumerate() {
+                    if map {
+                        // the scoreboard counts the days down, every plate lit
+                        let plates: Vec<(String, String, bool)> = parts
+                            .iter()
+                            .map(|(value, label)| {
+                                (format!("{value:02}"), (*label).to_owned(), true)
+                            })
+                            .collect();
+                        scoreboard(gfx, left, y, room, &plates, 4);
+                    }
+                    for (index, (value, label)) in parts.iter().enumerate().filter(|_| !map) {
                         let bx = left + index as f32 * (w + 10.0);
                         gfx.rect_line(bx, y, w, 58.0, fade(palette.accent, 0.15), 1.0);
                         let style = if gfx.cyber() {
@@ -541,9 +653,9 @@ fn draw_card(
                     }
                     gfx.text(
                         left,
-                        y + 70.0,
+                        y + if map { 90.0 } else { 70.0 },
                         &format!("avant le scan {}, {}", next.number, text::weekday(next.at)),
-                        Type::new(Face::Body, 15.0),
+                        Type::new(if map { Face::Italic } else { Face::Body }, 15.0),
                         palette.muted,
                         Anchor::TOP_LEFT,
                     );
@@ -564,32 +676,54 @@ fn draw_card(
                 } else {
                     palette.hot
                 };
-                big(
-                    gfx,
-                    left,
-                    top + 22.0,
-                    &format!("{:.0} $", portfolio.equity),
-                    colour,
-                );
-                let mut y = top + 92.0;
-                row(
-                    gfx,
-                    left,
-                    y,
-                    "Depuis le départ",
-                    &text::percent(change),
-                    colour,
-                );
-                y += 32.0;
-                row(
-                    gfx,
-                    left,
-                    y,
-                    "Trades",
-                    &portfolio.trades.to_string(),
-                    palette.text,
-                );
-                for position in portfolio.positions.iter().take(4) {
+                let mut y = if map {
+                    // the score of the match: the equity, its change, the trades
+                    let plates = [
+                        (
+                            format!("{:.0} $", portfolio.equity),
+                            "capital".to_owned(),
+                            true,
+                        ),
+                        (
+                            text::percent(change),
+                            "depuis le départ".to_owned(),
+                            change >= 0.0,
+                        ),
+                        (portfolio.trades.to_string(), "trades".to_owned(), true),
+                    ];
+                    top + 26.0 + scoreboard(gfx, left, top + 26.0, CARD_W - 44.0, &plates, 3) + 4.0
+                } else {
+                    big(
+                        gfx,
+                        left,
+                        top + 22.0,
+                        &format!("{:.0} $", portfolio.equity),
+                        colour,
+                    );
+                    let mut y = top + 92.0;
+                    row(
+                        gfx,
+                        left,
+                        y,
+                        "Depuis le départ",
+                        &text::percent(change),
+                        colour,
+                    );
+                    y += 32.0;
+                    row(
+                        gfx,
+                        left,
+                        y,
+                        "Trades",
+                        &portfolio.trades.to_string(),
+                        palette.text,
+                    );
+                    y
+                };
+                for (index, position) in portfolio.positions.iter().take(4).enumerate() {
+                    if map && index == 0 {
+                        y -= 32.0;
+                    }
                     y += 32.0;
                     let change = position.change();
                     let colour = match change {
@@ -623,61 +757,67 @@ fn draw_card(
                     },
                     age,
                 );
-                let mut devices: Vec<(String, bool)> = house
+                // name, state, on
+                let mut devices: Vec<(String, String, bool)> = house
                     .outlets
                     .iter()
-                    .map(|o| (o.name.clone(), o.on))
+                    .map(|o| {
+                        (
+                            o.name.clone(),
+                            if o.on { "allumé" } else { "éteint" }.to_owned(),
+                            o.on,
+                        )
+                    })
                     .collect();
                 devices.extend(house.covers.iter().map(|c| {
+                    let down = c.position > 0.0;
                     (
-                        format!(
-                            "{} · {}",
-                            c.name,
-                            if c.position > 0.0 {
-                                "baissé"
-                            } else {
-                                "remonté"
-                            }
-                        ),
-                        c.position > 0.0,
+                        c.name.clone(),
+                        if down { "baissé" } else { "remonté" }.to_owned(),
+                        down,
                     )
                 }));
                 devices.extend(house.projectors.iter().map(|p| {
                     (
-                        format!(
-                            "{}{}",
-                            p.name,
-                            p.app
-                                .as_deref()
-                                .filter(|_| p.on)
-                                .map(|app| format!(" · {app}"))
-                                .unwrap_or_default()
+                        p.name.clone(),
+                        p.app.as_deref().filter(|_| p.on).map_or_else(
+                            || if p.on { "allumé" } else { "éteint" }.to_owned(),
+                            str::to_owned,
                         ),
                         p.on,
                     )
                 }));
+                if map {
+                    // the scoreboard of the house: a beam of three plates a row
+                    let mut y = top + 62.0;
+                    for row in devices.chunks(3).take(2) {
+                        y += scoreboard(gfx, left, y, CARD_W - 44.0, row, 3) + 6.0;
+                    }
+                }
                 let w = (CARD_W - 44.0 - 12.0) / 2.0;
-                for (index, (name, on)) in devices.iter().enumerate().take(6) {
+                for (index, (name, state, on)) in
+                    devices.iter().enumerate().take(6).filter(|_| !map)
+                {
+                    let name = format!("{name} · {state}");
+                    let name = name.as_str();
                     let (bx, by) = (
                         left + (index % 2) as f32 * (w + 12.0),
                         top + 70.0 + (index / 2) as f32 * 54.0,
                     );
+                    let (lit, dim) = if map { (0.7, 0.3) } else { (0.35, 0.12) };
                     gfx.rect_line(
                         bx,
                         by,
                         w,
                         44.0,
-                        fade(palette.accent, if *on { 0.35 } else { 0.12 }),
+                        fade(palette.accent, if *on { lit } else { dim }),
                         1.0,
                     );
                     let pulse = 0.75 + 0.25 * (gfx.t * 2.4 + index as f32).sin();
                     if *on {
-                        gfx.halo(
-                            bx + 20.0,
-                            by + 22.0,
-                            18.0 * pulse,
-                            fade(palette.accent2, 0.55),
-                        );
+                        // a lit room glows candle-gold on the Map
+                        let glow = if map { turner::sand() } else { palette.accent2 };
+                        gfx.halo(bx + 20.0, by + 22.0, 18.0 * pulse, fade(glow, 0.55));
                         gfx.disc(bx + 20.0, by + 22.0, 6.0, palette.accent2);
                     } else {
                         gfx.disc(bx + 20.0, by + 22.0, 5.0, fade(palette.muted, 0.4));
@@ -736,30 +876,26 @@ fn draw_card(
         Card::Recent => {
             gfx.kicker(left, top, "Ajouté récemment", kicker);
             let mut bx = left;
-            // in hogwarts, small portraits in gilt frames: a little narrower
-            let (w, h, gap) = if parchment {
-                (88.0, 132.0, 26.0)
-            } else {
-                (100.0, 150.0, 14.0)
-            };
+            let (w, h, gap) = (100.0, 150.0, 14.0);
             for import in snapshot
                 .recent
                 .iter()
                 .filter(|import| import.poster.is_some())
                 .take(4)
             {
-                let by = top + if parchment { 44.0 } else { 34.0 };
+                let by = top + 34.0;
                 gfx.rect(bx, by, w, h, fade(palette.accent, 0.06));
-                if let Some(image) = import
+                let image = import
                     .poster
                     .as_ref()
-                    .and_then(|poster| textures.get(gfx.canvas, poster, 200, false))
-                {
-                    gfx.picture(image, bx, by, w, h, 1.0);
+                    .and_then(|poster| textures.get(gfx.canvas, poster, 200, finish));
+                // the Gazette prints its photographs in halftone
+                match image {
+                    Some(image) if map => gfx.photo(image, bx, by, w, h, 1.0),
+                    Some(image) => gfx.picture(image, bx, by, w, h, 1.0),
+                    None => {}
                 }
-                if parchment {
-                    gfx.portrait(bx, by, w, h, 1.0);
-                } else {
+                if !map {
                     gfx.rect_line(bx, by, w, h, fade(palette.accent, 0.3), 1.0);
                 }
                 let caption = match import.kind {
@@ -771,14 +907,14 @@ fn draw_card(
                     ),
                     MediaKind::Movie => import.title.clone(),
                 };
-                let lines = gfx.wrap(&caption, w, Type::new(Face::Body, 13.0), 2);
-                let below = if parchment { 16.0 } else { 8.0 };
+                let caption_style = Type::new(if map { Face::Italic } else { Face::Body }, 13.0);
+                let lines = gfx.wrap(&caption, w, caption_style, 2);
                 for (index, line) in lines.iter().enumerate() {
                     gfx.text(
                         bx,
-                        by + h + below + index as f32 * 15.0,
+                        by + h + 8.0 + index as f32 * 15.0,
                         line,
-                        Type::new(Face::Body, 13.0),
+                        caption_style,
                         palette.muted,
                         Anchor::TOP_LEFT,
                     );
@@ -787,7 +923,69 @@ fn draw_card(
             }
         }
         Card::Server => {
-            if let Some(disk) = snapshot.disk {
+            if let Some(disk) = snapshot.disk
+                && map
+            {
+                // the score of the server: free, used, services up, and the
+                // disk as a gauge of sand under the board
+                gfx.kicker(left, top, "Serveur", kicker);
+                let services = snapshot.services;
+                let plates = [
+                    (text::size(disk.free), "libres".to_owned(), true),
+                    (text::size(disk.used), "occupés".to_owned(), true),
+                    (
+                        format!("{} / {}", services.up, services.total),
+                        "services".to_owned(),
+                        services.total > 0 && services.up == services.total,
+                    ),
+                ];
+                let used = disk.used as f64 / disk.total.max(1) as f64;
+                let y = top
+                    + 44.0
+                    + scoreboard(gfx, left, top + 44.0, CARD_W - 44.0, &plates, 3)
+                    + 30.0;
+                gfx.text(
+                    left,
+                    y - 24.0,
+                    "LE DISQUE",
+                    Type::new(Face::Body, 12.0).spaced(2.0),
+                    palette.accent,
+                    Anchor::TOP_LEFT,
+                );
+                gauge(gfx, left, y, CARD_W - 44.0, used * 100.0);
+                gfx.text(
+                    left,
+                    y + 20.0,
+                    &format!("{:.0} % du disque", used * 100.0),
+                    Type::new(Face::Italic, 14.0),
+                    palette.muted,
+                    Anchor::TOP_LEFT,
+                );
+                gfx.text(
+                    left + CARD_W - 44.0,
+                    y + 20.0,
+                    &format!("{} en tout", text::size(disk.total)),
+                    Type::new(Face::Italic, 14.0),
+                    palette.muted,
+                    Anchor::TOP_RIGHT,
+                );
+                if let Some(warning) = view
+                    .warning
+                    .as_deref()
+                    .or(snapshot.warnings.first().map(String::as_str))
+                {
+                    gfx.paragraph(
+                        left,
+                        y + 50.0,
+                        warning,
+                        CARD_W - 44.0,
+                        Type::new(Face::Italic, 14.0),
+                        18.0,
+                        palette.hot,
+                        3,
+                    );
+                }
+            } else if let Some(disk) = snapshot.disk {
                 gfx.kicker(left, top, "Serveur", kicker);
                 big(
                     gfx,
@@ -805,22 +1003,8 @@ fn draw_card(
                     Anchor::TOP_LEFT,
                 );
                 let used = disk.used as f64 / disk.total.max(1) as f64;
-                // in hogwarts the space used is an hourglass of gems, the rows
-                // go under it
-                let below = if parchment {
-                    gfx.hourglass(
-                        card.house(),
-                        left + CARD_W - 44.0 - 68.0,
-                        top + 4.0,
-                        176.0,
-                        used as f32,
-                        false,
-                    );
-                    48.0
-                } else {
-                    gauge(gfx, left, top + 116.0, CARD_W - 44.0, used * 100.0);
-                    0.0
-                };
+                gauge(gfx, left, top + 116.0, CARD_W - 44.0, used * 100.0);
+                let below = 0.0;
                 let services = snapshot.services;
                 row(
                     gfx,
@@ -850,5 +1034,4 @@ fn draw_card(
         }
     }
     gfx.canvas.restore();
-    gfx.palette = saved;
 }

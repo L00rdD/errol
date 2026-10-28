@@ -1,6 +1,8 @@
 //! An event takes the screen: a picture of what happened on the left (a lamp,
 //! the projection screen, the projector's beam, a poster, a check, a chapter
 //! number), what it is on the right, and a bar draining until the next scene.
+//! On the Map it is a notice of the Gazette pinned over the castle, its tags
+//! stamped in red ink.
 
 use std::f32::consts::TAU;
 
@@ -11,12 +13,14 @@ use femtovg::{Color, Paint, Path};
 use super::{BOTTOM, TOP, text};
 use crate::anim::{decode, ease_back, ease_out, progress};
 use crate::look::{fade, rgb};
-use crate::render::{Anchor, Face, Gfx, Textures, Type};
+use crate::render::{Anchor, Face, Finish, Gfx, Textures, Type, ink};
 
 const CX: f32 = 176.0;
 const CY: f32 = f32::midpoint(TOP, BOTTOM);
 const TEXT_X: f32 = 352.0;
 const TEXT_W: f32 = 420.0;
+/// The notice pinned to the Map: x, y, w, h.
+const NOTICE: (f32, f32, f32, f32) = (30.0, TOP + 14.0, 740.0, BOTTOM - TOP - 40.0);
 
 pub fn draw(
     gfx: &mut Gfx,
@@ -27,6 +31,18 @@ pub fn draw(
     textures: &mut Textures,
 ) {
     let palette = gfx.palette;
+    let (nx, ny, nw, nh) = NOTICE;
+    if gfx.hogwarts() {
+        gfx.pinned(nx, ny, nw, nh, -0.35);
+        gfx.double_rule(
+            nx + 8.0,
+            ny + 8.0,
+            nw - 16.0,
+            nh - 16.0,
+            fade(ink::news_ink(), 0.8),
+        );
+    }
+    let text_w = if gfx.hogwarts() { 390.0 } else { TEXT_W };
     // the picture pops in, overshooting a little
     let pop = 0.4 + 0.6 * ease_back(progress(age, 0.9));
     gfx.canvas.save();
@@ -54,7 +70,7 @@ pub fn draw(
     } else {
         title
     };
-    let lines = gfx.wrap(&title, TEXT_W, title_style, 3);
+    let lines = gfx.wrap(&title, text_w, title_style, 3);
     let line_height = title_style.size * 1.22;
     let block = 26.0
         + lines.len() as f32 * line_height
@@ -101,8 +117,13 @@ pub fn draw(
 
     // the time left to this scene
     let left = 1.0 - progress(age, length);
-    gfx.rect(26.0, BOTTOM - 10.0, 748.0, 2.0, fade(palette.accent, 0.1));
-    gfx.rect(26.0, BOTTOM - 10.0, 748.0 * left, 2.0, palette.accent);
+    let (bx, by, bw) = if gfx.hogwarts() {
+        (nx + 30.0, ny + nh - 18.0, nw - 60.0)
+    } else {
+        (26.0, BOTTOM - 10.0, 748.0)
+    };
+    gfx.rect(bx, by, bw, 2.0, fade(palette.accent, 0.1));
+    gfx.rect(bx, by, bw * left, 2.0, palette.accent);
 }
 
 /// Draws the picture of the event; returns (kicker, title, subtitle, tags).
@@ -175,10 +196,15 @@ fn visual(
             )
         }
         EventKind::Import(import) => {
+            let finish = if gfx.hogwarts() {
+                Finish::Print
+            } else {
+                Finish::Plain
+            };
             if let Some(image) = import
                 .poster
                 .as_ref()
-                .and_then(|poster| textures.get(gfx.canvas, poster, 400, false))
+                .and_then(|poster| textures.get(gfx.canvas, poster, 400, finish))
             {
                 poster(gfx, image, CX - 100.0, CY - 150.0, 200.0, 300.0, age);
             } else {
@@ -225,13 +251,18 @@ fn visual(
                     Anchor::MIDDLE_CENTER,
                     1.0,
                 );
+            } else if gfx.hogwarts() {
+                // the number in red ink, as the Gazette prints its headlines
+                gfx.text(
+                    CX,
+                    CY,
+                    &number,
+                    Type::new(Face::Display, 84.0),
+                    gfx.palette.accent2,
+                    Anchor::MIDDLE_CENTER,
+                );
             } else {
-                // gold in hogwarts (a house point total), amber in friday
-                let colour = if gfx.hogwarts() {
-                    gfx.palette.accent
-                } else {
-                    gfx.palette.accent2
-                };
+                let colour = gfx.palette.accent2;
                 gfx.halo(CX, CY, 150.0, fade(colour, 0.18));
                 gfx.glow_text(
                     CX,
@@ -263,16 +294,18 @@ fn visual(
     }
 }
 
-/// Rings (friday) or diamonds (cyberpunk) widening from the centre, one a second.
+/// Rings (friday, in ink on the Map) or diamonds (cyberpunk) widening from
+/// the centre, one a second.
 fn halos(gfx: &mut Gfx, age: f32) {
     let colour = if gfx.cyber() {
         gfx.palette.hot
     } else {
         gfx.palette.accent
     };
+    let strength = if gfx.hogwarts() { 0.5 } else { 0.9 };
     for phase in 0..3 {
         let k = ((age + phase as f32) / 3.0).fract();
-        let alpha = 0.9 * (1.0 - k);
+        let alpha = strength * (1.0 - k);
         let size = 150.0 * (0.35 + 0.65 * k);
         if gfx.cyber() {
             let mut path = Path::new();
@@ -328,9 +361,15 @@ fn bulb(gfx: &mut Gfx, on: bool) {
     base.move_to(CX - 12.0, CY + 46.0);
     base.line_to(CX + 12.0, CY + 46.0);
     if on {
+        // on the Map the bulb is drawn in ink, lit from inside
+        let line = if gfx.hogwarts() {
+            gfx.palette.accent
+        } else {
+            rgb(0xffe3a3)
+        };
         gfx.fill(&glass, fade(warm, 0.35));
-        gfx.stroke(&glass, rgb(0xffe3a3), 4.0);
-        gfx.stroke(&base, rgb(0xffe3a3), 4.0);
+        gfx.stroke(&glass, line, 4.0);
+        gfx.stroke(&base, line, 4.0);
     } else {
         let paint = Paint::color(gfx.palette.muted)
             .with_line_width(3.0)
@@ -412,14 +451,19 @@ fn projector(gfx: &mut Gfx, on: bool, app: Option<&str>, age: f32) {
         cone.line_to(CX + 150.0, CY + 20.0);
         cone.line_to(lx, ly + 6.0);
         cone.close();
-        let paint = Paint::linear_gradient(
-            lx,
-            0.0,
-            CX + 150.0,
-            0.0,
-            fade(Color::white(), 0.8 * beam * flutter),
-            fade(rgb(0xa0e6ff), 0.12 * beam),
-        );
+        // the beam is light; on paper, a wash of ink
+        let (near, far) = if gfx.hogwarts() {
+            (
+                fade(palette.accent, 0.22 * beam * flutter),
+                fade(palette.accent, 0.04 * beam),
+            )
+        } else {
+            (
+                fade(Color::white(), 0.8 * beam * flutter),
+                fade(rgb(0xa0e6ff), 0.12 * beam),
+            )
+        };
+        let paint = Paint::linear_gradient(lx, 0.0, CX + 150.0, 0.0, near, far);
         gfx.canvas.fill_path(&cone, &paint);
         let panel = ease_out(progress(age - 1.6, 1.0));
         gfx.rect(
@@ -439,7 +483,11 @@ fn projector(gfx: &mut Gfx, on: bool, app: Option<&str>, age: f32) {
                 Anchor::MIDDLE_CENTER,
             );
         }
-        gfx.halo(lx, ly, 34.0, fade(palette.accent, 0.8));
+        if gfx.hogwarts() {
+            gfx.halo(lx, ly, 34.0, fade(rgb(0xd9a441), 0.8));
+        } else {
+            gfx.halo(lx, ly, 34.0, fade(palette.accent, 0.8));
+        }
         gfx.disc(lx, ly, 13.0, Color::white());
     } else {
         gfx.disc(lx, ly, 13.0, palette.bg);
@@ -493,21 +541,14 @@ fn check(gfx: &mut Gfx, age: f32) {
     }
 }
 
-/// A poster in a holographic frame: brackets, a slow sway, a light sweeping down.
+/// A poster in a holographic frame: brackets, a slow sway, a light sweeping
+/// down. On the Map, a photograph of the Gazette, pinned.
 #[allow(clippy::many_single_char_names)] // a box: x, y, w, h
 pub fn poster(gfx: &mut Gfx, image: femtovg::ImageId, x: f32, y: f32, w: f32, h: f32, age: f32) {
     let palette = gfx.palette;
-    if gfx.hogwarts() && gfx.hall.is_some() {
-        // a portrait of the castle: the picture in its carved gilt frame,
-        // under the old varnish
-        gfx.halo(
-            x + w / 2.0,
-            y + h / 2.0,
-            w * 1.1,
-            fade(palette.accent, 0.14),
-        );
-        gfx.picture(image, x, y, w, h, ease_out(progress(age, 0.6)));
-        gfx.portrait(x, y, w, h, 1.0);
+    if gfx.hogwarts() {
+        gfx.photo(image, x, y, w, h, ease_out(progress(age, 0.6)));
+        gfx.pin(x + w / 2.0, y + 2.0);
         return;
     }
     let sway = 1.0 - 0.05 * (gfx.t * TAU / 6.0).sin().abs();

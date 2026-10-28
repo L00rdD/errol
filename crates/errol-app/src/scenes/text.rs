@@ -55,6 +55,66 @@ pub fn weekday(at: Timestamp) -> String {
     )
 }
 
+const NUMBERS: [&str; 30] = [
+    "zéro",
+    "une",
+    "deux",
+    "trois",
+    "quatre",
+    "cinq",
+    "six",
+    "sept",
+    "huit",
+    "neuf",
+    "dix",
+    "onze",
+    "douze",
+    "treize",
+    "quatorze",
+    "quinze",
+    "seize",
+    "dix-sept",
+    "dix-huit",
+    "dix-neuf",
+    "vingt",
+    "vingt et une",
+    "vingt-deux",
+    "vingt-trois",
+    "vingt-quatre",
+    "vingt-cinq",
+    "vingt-six",
+    "vingt-sept",
+    "vingt-huit",
+    "vingt-neuf",
+];
+
+/// The time as French speakers say it: "une heure moins le quart".
+pub fn in_words(hour: u32, minute: u32) -> String {
+    let masculine = |word: &str| {
+        word.strip_suffix("une")
+            .map_or(word.to_owned(), |w| format!("{w}un"))
+    };
+    let (next, minutes) = match minute {
+        0 => (false, String::new()),
+        15 => (false, " et quart".into()),
+        30 => (false, " et demie".into()),
+        45 => (true, " moins le quart".into()),
+        m if m > 30 => (
+            true,
+            format!(" moins {}", masculine(NUMBERS[60 - m as usize])),
+        ),
+        m => (false, format!(" {}", masculine(NUMBERS[m as usize]))),
+    };
+    let h = (hour + u32::from(next)) % 24;
+    let hours = match h {
+        0 => "minuit".to_owned(),
+        12 => "midi".to_owned(),
+        1 | 13 => "une heure".to_owned(),
+        _ => format!("{} heures", NUMBERS[(h % 12) as usize]),
+    };
+    format!("{hours}{minutes}")
+}
+
 /// 1:27:19, or 4:05 under an hour.
 pub fn duration(secs: f64) -> String {
     let secs = secs.max(0.0) as u64;
@@ -103,6 +163,15 @@ mod tests {
     fn durations_drop_the_hours_under_an_hour() {
         assert_eq!(duration(5239.0), "1:27:19");
         assert_eq!(duration(245.0), "4:05");
+    }
+
+    #[test]
+    fn the_time_is_said_as_french_speakers_do() {
+        assert_eq!(in_words(22, 5), "dix heures cinq");
+        assert_eq!(in_words(0, 45), "une heure moins le quart");
+        assert_eq!(in_words(12, 30), "midi et demie");
+        assert_eq!(in_words(23, 21), "onze heures vingt et un");
+        assert_eq!(in_words(13, 39), "deux heures moins vingt et un");
     }
 
     #[test]

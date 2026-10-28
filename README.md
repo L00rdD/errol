@@ -25,21 +25,25 @@ It draws straight on the display with the GPU: no X, no Wayland, no browser.
 - **cyberpunk** takes Netwatch's red and yellow. A grid runs to the horizon
   under falling columns of data, scene changes glitch, and the cinema becomes
   a braindance editor with its three tracks.
-- **hogwarts** is the Great Hall at night, after the hub's own Great Hall.
-  Under the enchanted ceiling, with its stars, drifting clouds and the odd
-  shooting star, ivory candles float at three depths, their flames
-  flickering. The four house banners sway with their crests. The cards are
-  parchments with torn edges, a curled corner and a wax seal, written in ink.
-  The next chapter's countdown and the server's space become house-point
-  hourglasses filled with gems. Posters hang in carved gilt frames, and the
-  cinema becomes the Pensieve. Now and then a candle gutters, a draught bends
-  every flame and stirs the banners, or the Golden Snitch darts across. When
-  news arrives, the owl post flies through and drops its letter.
+- **hogwarts** is the Marauder's Map, after Pensieve's own. On warm
+  parchment with its stains, folds and burnt edges, the castle's rooms and
+  corridors are drawn in faint ink; Filch, Mrs Norris, Peeves and Dumbledore
+  wander about with their names on ribbons and their footprints behind them.
+  The clock is Hermione's Time-Turner, its engraved ring turning, its
+  hourglass emptying as the hour goes by, the time said in words under it.
+  The cards are rooms of the castle, each with its door and its name on a
+  ribbon, and footsteps walk from the Time-Turner to the next room when the
+  carousel turns. An event is a notice of the Daily Prophet pinned to the map,
+  its tags stamped in red ink; the cinema is the Prophet's front page, the
+  poster its photograph, printed in sepia halftone.
 
 The look can change while Errol runs. When the feed names a look in its
-`settings`, Errol switches to it at once; this is the remote control, meant
-to be set from a home page. Without one, Errol keeps its own (`--look` or
-`ERROL_LOOK`).
+`settings`, Errol switches to it at once; this is the remote control, set
+from the home page or from the projector's home screen (Pensieve), which
+follows the same setting. Without one, Errol keeps its own (`--look` or
+`ERROL_LOOK`). The looks' colours come from the house's `looks.json`, the
+reference the hub serves at `/theme/looks.json`; `assets/looks.json` is a
+copy of it, built into the binary.
 
 ## Scenes
 
@@ -55,14 +59,17 @@ the scene.
 ## How it works
 
 ```
-your feed  ──>  screen.json  ──>  errol  ──>  HDMI
-(any service)    (over HTTP)      (Rust, OpenGL ES, KMS/DRM)
+your feed  ──>  screen.json, screen/events  ──>  errol  ──>  HDMI
+(any service)    (over HTTP, pushed as SSE)      (Rust, OpenGL ES, KMS/DRM)
 ```
 
-Errol reads one JSON file over HTTP every second and draws at 30 frames per
-second. The file is written by whatever knows about your home. Mine is a small
-Python service that reads Jellyfin, a home hub, Transmission, Radarr and
-Sonarr every 3 s and turns each change into an event.
+Errol follows one JSON document over HTTP and draws at 30 frames per
+second. The document is written by whatever knows about your home. Mine is a
+small Python service that reads Jellyfin, a home hub, Transmission, Radarr and
+Sonarr every 3 s and turns each change into an event. It pushes every change
+on `screen/events` next to the file (Server-Sent Events), and Errol shows it
+the instant it is written; without the stream, Errol reads the file every
+second.
 
 On a Raspberry Pi 4, Errol takes about **22 % of one core and 100 MB of
 memory**. The first version, a web page in a kiosk Chromium, took about one and
@@ -193,7 +200,8 @@ once while it works, and change the timings in the script.
 crates/errol-domain   entities, ports, the scene director, use cases; no I/O, no serde
 crates/errol-data     the feed's JSON models, HTTP feed and pictures, the demo, the clock
 crates/errol-app      wiring, poller, picture loader, renderer, looks, backgrounds, scenes
-assets/fonts          Michroma and Rajdhani, built into the binary
+assets/fonts          Michroma, Rajdhani and IM Fell English, built into the binary
+assets/looks.json     the looks' colours, a copy of the hub's reference
 deploy/               the service, the install script, the EDID generator
 ```
 
@@ -211,11 +219,11 @@ The code is in three layers:
 Everything is synchronous. The only `unsafe` block hands SDL's GL functions to
 femtovg.
 
-The Great Hall is drawn once, when the look starts. The sky, the stars, the
-clouds, the candles' wax, a flame, the banners, the parchment, the seals, the
-gilt frame, the hourglasses and the owl are baked into GPU images
-(`render/hall.rs`, after the hub's own SVG). A frame then only places images
-with a transform, so the look costs no more than the others.
+The Map is drawn once, when the look starts. The parchment with the castle,
+the Time-Turner's engraved ring and the Prophet's halftone are baked into GPU
+images (`render/map.rs`, after Pensieve's own drawing). A frame then only
+places images with a transform and draws a few footprints, so the look costs
+no more than the others.
 
 Before a commit:
 
@@ -227,11 +235,11 @@ cargo test --workspace
 
 ## Credits
 
-- Michroma (the Michroma Project Authors), Rajdhani (Indian Type Foundry),
-  Cinzel (the Cinzel Project Authors) and IM Fell English (Igino Marini), under the SIL
-  Open Font License (`assets/fonts/OFL-*.txt`).
+- Michroma (the Michroma Project Authors), Rajdhani (Indian Type Foundry) and
+  IM Fell English (Igino Marini), under the SIL Open Font License
+  (`assets/fonts/OFL-*.txt`).
 - The looks are fan homages to Marvel's F.R.I.D.A.Y., to Cyberpunk 2077 and
-  to Harry Potter's Hogwarts; Errol is the Weasleys' owl.
+  to Harry Potter's Marauder's Map; Errol is the Weasleys' owl.
 - The demo shows posters from [TMDB](https://www.themoviedb.org).
 
 ## License

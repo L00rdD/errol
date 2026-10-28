@@ -1,21 +1,21 @@
 //! Animated backgrounds, one per look. `heat` (0 → 1.5) rises with a burst
 //! when a scene starts and cools down by itself.
 
-mod great_hall;
 mod grid;
+mod marauder;
 mod neural;
 
 use crate::look::Look;
 use crate::render::Gfx;
 
-pub use great_hall::GreatHall;
 pub use grid::Grid;
+pub use marauder::Marauder;
 pub use neural::Neural;
 
 pub enum Background {
     Neural(Neural),
     Grid(Grid),
-    GreatHall(Box<GreatHall>),
+    Marauder(Marauder),
 }
 
 impl Background {
@@ -23,7 +23,7 @@ impl Background {
         match look {
             Look::Friday => Self::Neural(Neural::new()),
             Look::Cyberpunk => Self::Grid(Grid::new()),
-            Look::Hogwarts => Self::GreatHall(Box::new(GreatHall::new())),
+            Look::Hogwarts => Self::Marauder(Marauder::new()),
         }
     }
 
@@ -31,7 +31,14 @@ impl Background {
         match self {
             Self::Neural(neural) => neural.burst(power),
             Self::Grid(grid) => grid.burst(power),
-            Self::GreatHall(hall) => hall.burst(power),
+            Self::Marauder(map) => map.burst(power),
+        }
+    }
+
+    /// Footsteps from one box's door to another's, on the Map; nothing elsewhere.
+    pub fn walk(&mut self, from: (f32, f32, f32, f32), to: (f32, f32, f32, f32)) {
+        if let Self::Marauder(map) = self {
+            map.walk(from, to);
         }
     }
 
@@ -39,7 +46,7 @@ impl Background {
         match self {
             Self::Neural(neural) => neural.draw(gfx, dt),
             Self::Grid(grid) => grid.draw(gfx, dt),
-            Self::GreatHall(hall) => hall.draw(gfx, dt),
+            Self::Marauder(map) => map.draw(gfx, dt),
         }
     }
 }

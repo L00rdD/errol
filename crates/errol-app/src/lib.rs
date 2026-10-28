@@ -11,7 +11,7 @@
 //! render     the window, the GL context, the frame loop, drawing helpers
 //! look       the three looks: friday (the AI after J.A.R.V.I.S.), cyberpunk, hogwarts
 //! anim       easing, decoding text, timing
-//! fx         animated backgrounds: neural network, Netwatch grid, Great Hall candles
+//! fx         animated backgrounds: neural network, Netwatch grid, the Marauder's Map
 //! scenes     header, ticker, idle recap, events, cinema
 //! ```
 

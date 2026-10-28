@@ -11,8 +11,8 @@ const BRAND_FRIDAY: &str = "F.R.I.D.A.Y.";
 const BRAND_FRIDAY_TYPE: Type = Type::new(Face::Display, 13.0).spaced(3.9);
 const BRAND_CYBER: &str = "NETWATCH//ERROL";
 const BRAND_CYBER_TYPE: Type = Type::new(Face::Bold, 19.0).spaced(1.5);
-const BRAND_HOGWARTS: &str = "HOGWARTS · ERROL";
-const BRAND_HOGWARTS_TYPE: Type = Type::new(Face::Display, 14.0).spaced(2.6);
+const BRAND_HOGWARTS: &str = "La Carte du Maraudeur";
+const BRAND_HOGWARTS_TYPE: Type = Type::new(Face::Italic, 17.0).spaced(0.5);
 
 pub fn draw(gfx: &mut Gfx, view: &View) {
     let palette = gfx.palette;
@@ -36,11 +36,9 @@ pub fn draw(gfx: &mut Gfx, view: &View) {
             0.0,
         );
     } else if gfx.hogwarts() {
-        // a gilt double rule under the name, like the home page's banner
-        gfx.vertical_gradient(0.0, 0.0, 800.0, 38.0, palette.bg, fade(palette.bg, 0.2));
-        gfx.rect(0.0, 34.0, 800.0, 1.0, fade(palette.accent, 0.55));
-        gfx.rect(0.0, 37.0, 800.0, 1.0, fade(palette.accent, 0.25));
-        gfx.title(
+        // the Map's title in its italic hand, a dashed rule under the line
+        gfx.dashed_rule(16.0, 36.5, 768.0, fade(palette.accent, 0.55));
+        gfx.text(
             16.0,
             19.0,
             BRAND_HOGWARTS,
@@ -72,10 +70,10 @@ pub fn draw(gfx: &mut Gfx, view: &View) {
     let mode = match (&view.scene, gfx.look) {
         (Scene::Idle, Look::Friday) => "VEILLE",
         (Scene::Idle, Look::Cyberpunk) => "STANDBY",
-        (Scene::Idle, Look::Hogwarts) => "TOUT EST CALME",
+        (Scene::Idle, Look::Hogwarts) => "RIEN À SIGNALER",
         (Scene::Event { .. }, Look::Friday) => "ALERTE",
         (Scene::Event { .. }, Look::Cyberpunk) => "INCOMING",
-        (Scene::Event { .. }, Look::Hogwarts) => "HIBOU POSTAL",
+        (Scene::Event { .. }, Look::Hogwarts) => "MÉFAIT EN COURS",
         (Scene::Cinema(_), Look::Friday) => "PROJECTION",
         (Scene::Cinema(_), Look::Cyberpunk) => "BRAINDANCE",
         (Scene::Cinema(_), Look::Hogwarts) => "PENSINE",
