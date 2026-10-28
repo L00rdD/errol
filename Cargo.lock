@@ -208,6 +208,8 @@ dependencies = [
  "glow",
  "image",
  "sdl2",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

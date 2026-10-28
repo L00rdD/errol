@@ -1,9 +1,71 @@
-//! The three looks, with the colours of Pensieve's: friday (cyan and amber,
-//! a neural HUD), cyberpunk (Netwatch red, yellow and cyan, braindance
-//! editor) and hogwarts (the Marauder's Map: brown and red ink on warm
-//! parchment).
+//! The three looks: friday (cyan and amber, a neural HUD), cyberpunk
+//! (Netwatch red, yellow and cyan, braindance editor) and hogwarts (the
+//! Marauder's Map: brown and red ink on warm parchment). Their colours come
+//! from the house's `looks.json`, the reference the hub serves at
+//! `/theme/looks.json` and Pensieve embeds too; `assets/looks.json` is a copy
+//! of it, built into the binary.
+
+use std::sync::OnceLock;
 
 use femtovg::Color;
+use serde::Deserialize;
+
+const LOOKS: &str = include_str!("../../../assets/looks.json");
+
+#[derive(Deserialize)]
+struct LooksFile {
+    looks: Vec<LookEntry>,
+}
+
+#[derive(Deserialize)]
+struct LookEntry {
+    id: String,
+    colors: Colors,
+}
+
+#[derive(Deserialize)]
+struct Colors {
+    bg: String,
+    accent: String,
+    accent2: String,
+    text: String,
+    muted: String,
+    hot: String,
+    ok: String,
+}
+
+/// The palettes of `looks.json`, read once; the file is built in, so a bad
+/// one is a bug caught by the tests, not something to recover from.
+fn palettes() -> &'static [Palette; 3] {
+    static PALETTES: OnceLock<[Palette; 3]> = OnceLock::new();
+    PALETTES.get_or_init(|| {
+        let file: LooksFile = serde_json::from_str(LOOKS).expect("assets/looks.json is valid");
+        [Look::Friday, Look::Cyberpunk, Look::Hogwarts].map(|look| {
+            let entry = file
+                .looks
+                .iter()
+                .find(|entry| entry.id == look.id())
+                .unwrap_or_else(|| panic!("assets/looks.json names {}", look.id()));
+            let c = &entry.colors;
+            Palette {
+                bg: hex(&c.bg),
+                accent: hex(&c.accent),
+                accent2: hex(&c.accent2),
+                text: hex(&c.text),
+                muted: hex(&c.muted),
+                hot: hex(&c.hot),
+                ok: hex(&c.ok),
+            }
+        })
+    })
+}
+
+/// "#6fe3ff" as a colour.
+fn hex(text: &str) -> Color {
+    let value = u32::from_str_radix(text.trim_start_matches('#'), 16)
+        .unwrap_or_else(|error| panic!("assets/looks.json: bad colour {text:?}: {error}"));
+    rgb(value)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Look {
@@ -13,12 +75,23 @@ pub enum Look {
 }
 
 impl Look {
+    /// The look named `name`: its id in `looks.json` (what the feed and
+    /// Pensieve use), or its name on the hub.
     pub fn parse(name: &str) -> Option<Self> {
         match name {
             "friday" | "reactor" => Some(Self::Friday),
             "cyberpunk" => Some(Self::Cyberpunk),
             "hogwarts" => Some(Self::Hogwarts),
             _ => None,
+        }
+    }
+
+    /// The look's id in `looks.json`.
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::Friday => "friday",
+            Self::Cyberpunk => "cyberpunk",
+            Self::Hogwarts => "hogwarts",
         }
     }
 
@@ -30,35 +103,7 @@ impl Look {
     }
 
     pub fn palette(self) -> Palette {
-        match self {
-            Self::Friday => Palette {
-                bg: rgb(0x02070d),
-                accent: rgb(0x6fe3ff),
-                accent2: rgb(0xffc857),
-                text: rgb(0xd9f6ff),
-                muted: rgb(0x7fa9b8),
-                hot: rgb(0xff4b3e),
-                ok: rgb(0x7dffb3),
-            },
-            Self::Cyberpunk => Palette {
-                bg: rgb(0x07080d),
-                accent: rgb(0xff6158),
-                accent2: rgb(0x5ef6ff),
-                text: rgb(0xf1e9e4),
-                muted: rgb(0xa2726d),
-                hot: rgb(0xf3e600),
-                ok: rgb(0x39ff88),
-            },
-            Self::Hogwarts => Palette {
-                bg: rgb(0xf6dda6),
-                accent: rgb(0x3f210b),
-                accent2: rgb(0x9c1f12),
-                text: rgb(0x2a1608),
-                muted: rgb(0x74471f),
-                hot: rgb(0x9c1f12),
-                ok: rgb(0x2d6a36),
-            },
-        }
+        palettes()[self as usize]
     }
 }
 
@@ -104,6 +149,15 @@ mod tests {
     #[test]
     fn the_look_the_feed_asks_for_wins() {
         assert_eq!(Look::choose(Some("hogwarts"), Look::Friday), Look::Hogwarts);
+    }
+
+    #[test]
+    fn every_look_has_its_palette_in_looks_json() {
+        for look in [Look::Friday, Look::Cyberpunk, Look::Hogwarts] {
+            let palette = look.palette();
+            assert!(palette.bg != palette.accent, "{look:?}");
+        }
+        assert_eq!(Look::Hogwarts.palette().bg, rgb(0xf6dda6));
     }
 
     #[test]

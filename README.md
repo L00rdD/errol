@@ -38,9 +38,12 @@ It draws straight on the display with the GPU: no X, no Wayland, no browser.
   poster its photograph, printed in sepia halftone.
 
 The look can change while Errol runs. When the feed names a look in its
-`settings`, Errol switches to it at once; this is the remote control, meant
-to be set from a home page. Without one, Errol keeps its own (`--look` or
-`ERROL_LOOK`).
+`settings`, Errol switches to it at once; this is the remote control, set
+from the home page or from the projector's home screen (Pensieve), which
+follows the same setting. Without one, Errol keeps its own (`--look` or
+`ERROL_LOOK`). The looks' colours come from the house's `looks.json`, the
+reference the hub serves at `/theme/looks.json`; `assets/looks.json` is a
+copy of it, built into the binary.
 
 ## Scenes
 
@@ -195,6 +198,7 @@ crates/errol-domain   entities, ports, the scene director, use cases; no I/O, no
 crates/errol-data     the feed's JSON models, HTTP feed and pictures, the demo, the clock
 crates/errol-app      wiring, poller, picture loader, renderer, looks, backgrounds, scenes
 assets/fonts          Michroma, Rajdhani and IM Fell English, built into the binary
+assets/looks.json     the looks' colours, a copy of the hub's reference
 deploy/               the service, the install script, the EDID generator
 ```
 
