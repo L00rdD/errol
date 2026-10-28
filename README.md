@@ -59,14 +59,17 @@ the scene.
 ## How it works
 
 ```
-your feed  ──>  screen.json  ──>  errol  ──>  HDMI
-(any service)    (over HTTP)      (Rust, OpenGL ES, KMS/DRM)
+your feed  ──>  screen.json, screen/events  ──>  errol  ──>  HDMI
+(any service)    (over HTTP, pushed as SSE)      (Rust, OpenGL ES, KMS/DRM)
 ```
 
-Errol reads one JSON file over HTTP every second and draws at 30 frames per
-second. The file is written by whatever knows about your home. Mine is a small
-Python service that reads Jellyfin, a home hub, Transmission, Radarr and
-Sonarr every 3 s and turns each change into an event.
+Errol follows one JSON document over HTTP and draws at 30 frames per
+second. The document is written by whatever knows about your home. Mine is a
+small Python service that reads Jellyfin, a home hub, Transmission, Radarr and
+Sonarr every 3 s and turns each change into an event. It pushes every change
+on `screen/events` next to the file (Server-Sent Events), and Errol shows it
+the instant it is written; without the stream, Errol reads the file every
+second.
 
 On a Raspberry Pi 4, Errol takes about **22 % of one core and 100 MB of
 memory**. The first version, a web page in a kiosk Chromium, took about one and
