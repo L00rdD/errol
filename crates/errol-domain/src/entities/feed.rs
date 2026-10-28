@@ -222,6 +222,11 @@ pub struct Services {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Cerebro {
     pub sessions: Vec<Session>,
+    /// Size of a room's frame and of a character's, in Cerebro's pixels.
+    pub room_size: (u32, u32),
+    pub character_size: (u32, u32),
+    /// The sheet of emotes: asleep (Zz), alert (!).
+    pub emotes: Option<PictureRef>,
 }
 
 impl Cerebro {
@@ -259,4 +264,44 @@ pub struct Session {
     pub lead: Option<String>,
     /// Subagents it runs now.
     pub agents: u32,
+    /// What Cerebro draws for it, when the feed has it.
+    pub scene: Option<SessionScene>,
+}
+
+/// A session's room and the X-Men in it, as Cerebro's panel draws them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionScene {
+    /// The room's sprite sheet: its frames side by side.
+    pub room: PictureRef,
+    pub frames: u32,
+    pub fps: u32,
+    /// Where the actors walk: x, y, width, height, in the room's pixels.
+    pub walk: (u32, u32, u32, u32),
+    pub actors: Vec<Actor>,
+}
+
+/// An X-Man of a scene: the session's lead, or a subagent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Actor {
+    /// Seeds its wandering: the same id walks the same path on every screen.
+    pub id: String,
+    pub name: String,
+    /// Its sheet: 4 frames by 3 rows (front, back, side).
+    pub sprite: PictureRef,
+    /// How it travels: walk, fly, teleport, phase, dash.
+    pub movement: String,
+    /// The power it uses when it pauses (beam, bolt, psychic…).
+    pub power: String,
+    /// `#RRGGBB` of its power, and of its aura when it has one.
+    pub colour: String,
+    pub aura: Option<String>,
+    pub state: ActorState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActorState {
+    Walking,
+    Asleep,
+    /// Waiting for an answer: an exclamation mark blinks over it.
+    Alert,
 }

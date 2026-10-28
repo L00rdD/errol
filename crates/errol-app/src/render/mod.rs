@@ -31,6 +31,16 @@ const RAJDHANI_SEMIBOLD: &[u8] = include_bytes!("../../../../assets/fonts/Rajdha
 const RAJDHANI_BOLD: &[u8] = include_bytes!("../../../../assets/fonts/Rajdhani-Bold.ttf");
 const FELL: &[u8] = include_bytes!("../../../../assets/fonts/IMFellEnglish-Regular.ttf");
 const FELL_ITALIC: &[u8] = include_bytes!("../../../../assets/fonts/IMFellEnglish-Italic.ttf");
+/// Where the system keeps a monospace, regular and bold: Cerebro's cards are
+/// written in one.
+const MONO: [&str; 2] = [
+    "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+    "/System/Library/Fonts/Menlo.ttc",
+];
+const MONO_BOLD: [&str; 2] = [
+    "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf",
+    "/System/Library/Fonts/Menlo.ttc",
+];
 
 pub fn run(options: &Options, observe: &ObserveFeed, pictures: &Pictures) -> Result<(), String> {
     let sdl = sdl2::init()?;
@@ -80,13 +90,28 @@ pub fn run(options: &Options, observe: &ObserveFeed, pictures: &Pictures) -> Res
             .add_font_mem(data)
             .map_err(|error| format!("font: {error:?}"))
     };
+    let (medium, semibold) = (font(RAJDHANI_MEDIUM)?, font(RAJDHANI_SEMIBOLD)?);
+    let mut system = |paths: [&str; 2], fallback| {
+        paths
+            .iter()
+            .find_map(|path| canvas.add_font(path).ok())
+            .unwrap_or(fallback)
+    };
+    let (mono, mono_bold) = (system(MONO, medium), system(MONO_BOLD, semibold));
+    let mut font = |data: &[u8]| {
+        canvas
+            .add_font_mem(data)
+            .map_err(|error| format!("font: {error:?}"))
+    };
     let fonts = Fonts {
         michroma: font(MICHROMA)?,
-        medium: font(RAJDHANI_MEDIUM)?,
-        semibold: font(RAJDHANI_SEMIBOLD)?,
+        medium,
+        semibold,
         bold: font(RAJDHANI_BOLD)?,
         fell: font(FELL)?,
         fell_italic: font(FELL_ITALIC)?,
+        mono,
+        mono_bold,
     };
 
     let mut look = options.look;

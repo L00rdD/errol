@@ -1,6 +1,7 @@
 //! An event takes the screen: a picture of what happened on the left (a lamp,
 //! the projection screen, the projector's beam, a poster, a check, a chapter
-//! number, a question from Claude), what it is on the right, and a bar draining until the next scene.
+//! number, the room of a Claude Code session as Cerebro draws it), what it
+//! is on the right, and a bar draining until the next scene.
 //! On the Map it is a notice of the Gazette pinned over the castle, its tags
 //! stamped in red ink.
 
@@ -10,7 +11,7 @@ use errol_domain::entities::{Event, EventKind};
 use errol_domain::usecases::View;
 use femtovg::{Color, Paint, Path};
 
-use super::{BOTTOM, TOP, text};
+use super::{BOTTOM, TOP, text, xmansion};
 use crate::anim::{decode, ease_back, ease_out, progress};
 use crate::look::{fade, rgb};
 use crate::render::{Anchor, Face, Finish, Gfx, Textures, Type, ink};
@@ -295,8 +296,35 @@ fn visual(
             project,
             room,
         } => {
-            halos(gfx, age);
-            question(gfx);
+            // the session's card as Cerebro shows it, its lead's "!" blinking
+            let cerebro = view.snapshot.as_ref().and_then(|s| s.cerebro.as_ref());
+            let session = cerebro.and_then(|cerebro| {
+                cerebro
+                    .sessions
+                    .iter()
+                    .find(|session| &session.name == name && session.scene.is_some())
+                    .map(|session| (cerebro, session))
+            });
+            if let Some((cerebro, session)) = session {
+                let scale = 1.4;
+                let (w, h) = (
+                    xmansion::card_width(cerebro, scale),
+                    xmansion::card_height(cerebro, scale),
+                );
+                xmansion::draw_card(
+                    gfx,
+                    textures,
+                    cerebro,
+                    session,
+                    CX - w / 2.0,
+                    CY - h / 2.0,
+                    scale,
+                    view.now.0,
+                );
+            } else {
+                halos(gfx, age);
+                question(gfx);
+            }
             let sub = match project {
                 Some(project) => format!("attend ta réponse · {project}"),
                 None => "attend ta réponse".into(),

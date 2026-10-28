@@ -9,6 +9,7 @@ mod idle;
 mod text;
 mod ticker;
 mod turner;
+mod xmansion;
 
 use errol_domain::strategies::Scene;
 use errol_domain::usecases::View;

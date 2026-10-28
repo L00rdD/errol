@@ -13,6 +13,10 @@ pub struct Fonts {
     pub bold: FontId,
     pub fell: FontId,
     pub fell_italic: FontId,
+    /// Cerebro's monospace: the system's (`DejaVu Sans Mono` on the Pi, Menlo
+    /// on the Mac), Rajdhani when there is none.
+    pub mono: FontId,
+    pub mono_bold: FontId,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,6 +28,9 @@ pub enum Face {
     Bold,
     /// Hogwarts' italic hand (IM Fell English); the body face elsewhere.
     Italic,
+    /// Cerebro's monospace, the same in every look.
+    Mono,
+    MonoBold,
 }
 
 /// Where a text is anchored.
@@ -120,6 +127,8 @@ impl Gfx<'_> {
     fn font(&self, face: Face) -> [FontId; 2] {
         // Michroma has no ◆, no arrows: Rajdhani catches what it lacks
         let primary = match (face, self.look) {
+            (Face::Mono, _) => self.fonts.mono,
+            (Face::MonoBold, _) => self.fonts.mono_bold,
             (Face::Display, Look::Friday) => self.fonts.michroma,
             (Face::Display | Face::Strong | Face::Bold | Face::Body, Look::Hogwarts) => {
                 self.fonts.fell

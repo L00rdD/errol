@@ -9,15 +9,56 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use errol_domain::DomainError;
 use errol_domain::entities::{
-    Cerebro, Chapter, Cover, Disk, Download, Event, EventId, EventKind, House, Import, MediaKind,
-    NextChapter, OnePiece, Outlet, PictureRef, Playing, Portfolio, Position, Projector, Services,
-    Session, SessionStatus, Snapshot, Timestamp,
+    Actor, ActorState, Cerebro, Chapter, Cover, Disk, Download, Event, EventId, EventKind, House,
+    Import, MediaKind, NextChapter, OnePiece, Outlet, PictureRef, Playing, Portfolio, Position,
+    Projector, Services, Session, SessionScene, SessionStatus, Snapshot, Timestamp,
 };
 use errol_domain::ports::{Clock, FeedSource};
 
 /// Length of one evening of the demo, in seconds.
 const CYCLE: f64 = 240.0;
 const TMDB: &str = "https://image.tmdb.org/t/p/";
+/// Cerebro's sprites for the demo: a Mac running it (`ERROL_DEMO_CEREBRO`
+/// overrides it); without one, the rooms stay empty.
+const CEREBRO: &str = "http://172.28.115.163:4243/";
+
+fn cerebro_sprite(path: &str) -> PictureRef {
+    let base = std::env::var("ERROL_DEMO_CEREBRO").unwrap_or_else(|_| CEREBRO.to_owned());
+    PictureRef::new(format!("{}/{path}", base.trim_end_matches('/')))
+}
+
+/// An X-Man as Cerebro's manifest describes it.
+fn actor(
+    id: &str,
+    character: &str,
+    name: &str,
+    movement: &str,
+    power: &str,
+    colour: &str,
+    aura: Option<&str>,
+    state: ActorState,
+) -> Actor {
+    Actor {
+        id: id.into(),
+        name: name.into(),
+        sprite: cerebro_sprite(&format!("characters/{character}.png")),
+        movement: movement.into(),
+        power: power.into(),
+        colour: colour.into(),
+        aura: aura.map(str::to_owned),
+        state,
+    }
+}
+
+fn room(id: &str, frames: u32, walk: (u32, u32, u32, u32), actors: Vec<Actor>) -> SessionScene {
+    SessionScene {
+        room: cerebro_sprite(&format!("rooms/{id}.png")),
+        frames,
+        fps: 8,
+        walk,
+        actors,
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DemoScene {
@@ -261,6 +302,9 @@ fn base(now: Timestamp) -> Snapshot {
         }),
         services: Services { up: 18, total: 18 },
         cerebro: Some(Cerebro {
+            room_size: (192, 120),
+            character_size: (24, 24),
+            emotes: Some(cerebro_sprite("ui/emotes.png")),
             sessions: vec![
                 Session {
                     name: "errol-8b".into(),
@@ -269,7 +313,34 @@ fn base(now: Timestamp) -> Snapshot {
                     since: Some(now.plus_secs(-754.0)),
                     room: Some("Danger Room".into()),
                     lead: Some("Cyclops".into()),
-                    agents: 0,
+                    agents: 1,
+                    scene: Some(room(
+                        "danger-room",
+                        16,
+                        (14, 64, 164, 50),
+                        vec![
+                            actor(
+                                "lead:demo-errol",
+                                "cyclops",
+                                "Cyclops",
+                                "walk",
+                                "beam",
+                                "#FF2A2A",
+                                None,
+                                ActorState::Walking,
+                            ),
+                            actor(
+                                "agent:demo-errol-1",
+                                "wolverine",
+                                "Wolverine",
+                                "walk",
+                                "claws",
+                                "#E8E8F0",
+                                None,
+                                ActorState::Walking,
+                            ),
+                        ],
+                    )),
                 },
                 Session {
                     name: "skylink-41".into(),
@@ -277,8 +348,45 @@ fn base(now: Timestamp) -> Snapshot {
                     status: SessionStatus::Busy,
                     since: Some(now.plus_secs(-2_410.0)),
                     room: Some("Rooftop Helipad".into()),
-                    lead: Some("Havok".into()),
+                    lead: Some("Storm".into()),
                     agents: 2,
+                    scene: Some(room(
+                        "rooftop",
+                        16,
+                        (14, 54, 164, 60),
+                        vec![
+                            actor(
+                                "lead:demo-skylink",
+                                "storm",
+                                "Storm",
+                                "fly",
+                                "bolt",
+                                "#F4F4FF",
+                                Some("#BFE6FF"),
+                                ActorState::Walking,
+                            ),
+                            actor(
+                                "agent:demo-skylink-1",
+                                "nightcrawler",
+                                "Nightcrawler",
+                                "teleport",
+                                "leap",
+                                "#8A6AE0",
+                                None,
+                                ActorState::Walking,
+                            ),
+                            actor(
+                                "agent:demo-skylink-2",
+                                "northstar",
+                                "Northstar",
+                                "dash",
+                                "sparks",
+                                "#F4F4F4",
+                                Some("#F4F4F4"),
+                                ActorState::Walking,
+                            ),
+                        ],
+                    )),
                 },
                 Session {
                     name: "pensieve-3c".into(),
@@ -288,6 +396,21 @@ fn base(now: Timestamp) -> Snapshot {
                     room: Some("Library".into()),
                     lead: Some("Beast".into()),
                     agents: 0,
+                    scene: Some(room(
+                        "library",
+                        1,
+                        (12, 66, 168, 48),
+                        vec![actor(
+                            "lead:demo-pensieve",
+                            "beast",
+                            "Beast",
+                            "walk",
+                            "leap",
+                            "#FFFFFF",
+                            None,
+                            ActorState::Asleep,
+                        )],
+                    )),
                 },
             ],
         }),
@@ -345,6 +468,9 @@ impl FeedSource for DemoFeedSource {
         // the session that asked is waiting until the end of the evening
         if let Some(cerebro) = snapshot.cerebro.as_mut().filter(|_| at >= 122.0) {
             cerebro.sessions[0].status = SessionStatus::Waiting;
+            if let Some(scene) = &mut cerebro.sessions[0].scene {
+                scene.actors[0].state = ActorState::Alert;
+            }
             cerebro
                 .sessions
                 .sort_by_key(|s| s.status != SessionStatus::Waiting);

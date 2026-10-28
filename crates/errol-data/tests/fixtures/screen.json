@@ -16,9 +16,11 @@
  "disk": {"total": 1430000000000, "used": 980000000000, "free": 450000000000},
  "services": {"up": 18, "total": 18},
  "cerebro": {"sessions": [
-   {"id": "a", "name": "errol-8b", "project": "~/personal/errol", "status": "waiting", "since": "2026-10-26T22:01:30+01:00", "room": "Danger Room", "lead": "Cyclops", "agents": 0},
+   {"id": "a", "name": "errol-8b", "project": "~/personal/errol", "status": "waiting", "since": "2026-10-26T22:01:30+01:00", "room": "Danger Room", "lead": "Cyclops", "agents": 0,
+    "scene": {"room": {"sprite": "/cerebro/rooms/danger-room.png", "frames": 16, "fps": 8, "walk": {"x": 10, "y": 76, "width": 172, "height": 40}},
+              "actors": [{"id": "lead:a", "name": "Cyclops", "sprite": "/cerebro/characters/cyclops.png", "move": "walk", "power": "beam", "color": "#FF2A2A", "aura": null, "state": "alert"}]}},
    {"id": "b", "name": "skylink-41", "project": "~/dronevolt/skylink", "status": "busy", "since": "2026-10-26T21:40:00+01:00", "room": "Rooftop Helipad", "lead": "Havok", "agents": 2},
    {"id": "c", "name": "pensieve-3c", "project": null, "status": "idle", "since": null, "room": null, "lead": null, "agents": null}],
-   "busy": 1, "waiting": 1, "link": "http://mac.local:4243/?key=x"},
+   "busy": 1, "waiting": 1, "room_size": [192, 120], "character_size": [24, 24], "emotes": "/cerebro/ui/emotes.png", "link": "http://mac.local:4243/?key=x"},
  "errors": {"house": "timeout"},
  "settings": {"look": "hogwarts", "follow_hub": true}}

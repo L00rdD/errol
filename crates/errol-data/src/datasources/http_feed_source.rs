@@ -14,6 +14,8 @@ pub struct HttpFeedSource {
     url: String,
     events: String,
     jellyfin: String,
+    /// The home page's origin (`http://localhost`): Cerebro's sprites are on it.
+    hub: String,
     agent: ureq::Agent,
     /// The stream's connection: it stays open for hours, so no global budget;
     /// the feed writes a comment every 15 s, and reading waits for it.
@@ -36,6 +38,7 @@ impl HttpFeedSource {
             .into();
         Self {
             events: events_url(&url),
+            hub: origin(&url),
             url,
             jellyfin: jellyfin.into(),
             agent,
@@ -49,6 +52,15 @@ fn events_url(feed: &str) -> String {
     match feed.rsplit_once('/') {
         Some((base, _)) => format!("{base}/screen/events"),
         None => format!("{feed}/screen/events"),
+    }
+}
+
+/// The scheme and host of a URL: `http://localhost/screen.json` → `http://localhost`.
+fn origin(url: &str) -> String {
+    let start = url.find("://").map_or(0, |at| at + 3);
+    match url[start..].find('/') {
+        Some(end) => url[..start + end].to_owned(),
+        None => url.to_owned(),
     }
 }
 
@@ -91,7 +103,7 @@ impl FeedSource for HttpFeedSource {
             .body_mut()
             .read_json()
             .map_err(|error| unavailable(&error))?;
-        Ok(file.into_snapshot(&self.jellyfin))
+        Ok(file.into_snapshot(&self.jellyfin, &self.hub))
     }
 
     fn follow(&self, sink: &mut dyn FnMut(Snapshot)) -> Result<(), DomainError> {
@@ -114,7 +126,7 @@ impl FeedSource for HttpFeedSource {
         events(reader, &mut |data| {
             // a document that does not parse is skipped: the next one may
             if let Ok(file) = serde_json::from_str::<FeedFile>(data) {
-                sink(file.into_snapshot(&self.jellyfin));
+                sink(file.into_snapshot(&self.jellyfin, &self.hub));
             }
         })
         .map_err(|error| unavailable(&error))?;
@@ -125,6 +137,15 @@ impl FeedSource for HttpFeedSource {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_hub_is_the_origin_of_the_feed() {
+        assert_eq!(origin("http://localhost/screen.json"), "http://localhost");
+        assert_eq!(
+            origin("http://dpi.local:8088/screen.json"),
+            "http://dpi.local:8088"
+        );
+    }
 
     #[test]
     fn the_stream_sits_next_to_the_feed() {

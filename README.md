@@ -49,7 +49,7 @@ copy of it, built into the binary.
 
 | Scene | When | For how long |
 | :--- | :--- | :--- |
-| Idle | nothing else | A clock in its turning rings, and cards that slide by every 7 s: the next One Piece chapter with a countdown, the portfolio, the house, the Mac's Claude Code sessions, downloads, latest additions with their posters, the server's free space |
+| Idle | nothing else | A clock in its turning rings, and cards that slide by every 7 s: the next One Piece chapter with a countdown, the portfolio, the house, the Mac's Claude Code sessions (drawn as Cerebro draws them: its X-Mansion rooms and X-Men, in pixel art), downloads, latest additions with their posters, the server's free space |
 | Event | a lamp switches; the projection screen moves (its cloth comes down live); the projector starts or changes app; a download finishes; a film or an episode is imported; a new chapter is out; a Claude Code session waits for an answer | 25 s for a lamp, 40 s for the screen, the projector and a session, 90 s for downloads and imports, 2 min for a chapter. A new event cuts the one on screen short and shows at once; those still waiting follow it, and a burst (ten episodes imported at once) takes a single turn |
 | Cinema | a video plays on Jellyfin | Until it stops: the blurred backdrop drifting, the poster in a holographic frame, the story, progress and end time |
 
@@ -116,7 +116,12 @@ Every field is optional: Errol shows what it gets and hides the rest.
   "services": {"up": 18, "total": 18},
   "cerebro": {"sessions": [{                // Claude Code sessions, from Cerebro on the Mac (absent while it sleeps)
     "name": "errol-8b", "project": "~/personal/errol", "status": "waiting",   // or "busy", "idle"
-    "since": "…", "room": "Danger Room", "lead": "Cyclops", "agents": 0}]},
+    "since": "…", "room": "Danger Room", "lead": "Cyclops", "agents": 0,
+    "scene": {"room": {"sprite": "/cerebro/rooms/danger-room.png", "frames": 16, "fps": 8,   // sprites: paths on the hub
+                       "walk": {"x": 14, "y": 64, "width": 164, "height": 50}},
+              "actors": [{"id": "lead:…", "name": "Cyclops", "sprite": "/cerebro/characters/cyclops.png",
+                          "move": "walk", "power": "beam", "color": "#FF2A2A", "aura": null, "state": "alert"}]}}],
+   "room_size": [192, 120], "character_size": [24, 24], "emotes": "/cerebro/ui/emotes.png"},
   "errors": {"house": "timeout"},     // sources the feed could not read
   "settings": {"look": "hogwarts",    // the look to show now; null keeps Errol's own
                "follow_hub": true}    // for the feed: the home page sets the look when its own changes

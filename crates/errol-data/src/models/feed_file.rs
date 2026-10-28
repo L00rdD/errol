@@ -2,9 +2,9 @@ use std::collections::BTreeMap;
 
 use chrono::DateTime;
 use errol_domain::entities::{
-    Cerebro, Chapter, Cover, Disk, Download, Event, EventId, EventKind, House, Import, MediaKind,
-    NextChapter, OnePiece, Outlet, PictureRef, Playing, Portfolio, Position, Projector, Services,
-    Session, SessionStatus, Settings, Snapshot, Timestamp,
+    Actor, ActorState, Cerebro, Chapter, Cover, Disk, Download, Event, EventId, EventKind, House,
+    Import, MediaKind, NextChapter, OnePiece, Outlet, PictureRef, Playing, Portfolio, Position,
+    Projector, Services, Session, SessionScene, SessionStatus, Settings, Snapshot, Timestamp,
 };
 use serde::{Deserialize, Deserializer};
 use serde_json::Value;
@@ -216,6 +216,55 @@ struct ServicesModel {
 struct CerebroModel {
     #[serde(deserialize_with = "nullable")]
     sessions: Vec<SessionModel>,
+    room_size: Option<(u32, u32)>,
+    character_size: Option<(u32, u32)>,
+    emotes: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(default)]
+struct SceneModel {
+    room: Option<RoomModel>,
+    #[serde(deserialize_with = "nullable")]
+    actors: Vec<ActorModel>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(default)]
+struct RoomModel {
+    sprite: Option<String>,
+    frames: Option<u32>,
+    fps: Option<u32>,
+    walk: Option<RectModel>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(default)]
+struct RectModel {
+    #[serde(deserialize_with = "nullable")]
+    x: u32,
+    #[serde(deserialize_with = "nullable")]
+    y: u32,
+    #[serde(deserialize_with = "nullable")]
+    width: u32,
+    #[serde(deserialize_with = "nullable")]
+    height: u32,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(default)]
+struct ActorModel {
+    #[serde(deserialize_with = "nullable")]
+    id: String,
+    #[serde(deserialize_with = "nullable")]
+    name: String,
+    sprite: Option<String>,
+    #[serde(rename = "move")]
+    movement: Option<String>,
+    power: Option<String>,
+    color: Option<String>,
+    aura: Option<String>,
+    state: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -230,6 +279,7 @@ struct SessionModel {
     lead: Option<String>,
     #[serde(deserialize_with = "nullable")]
     agents: u32,
+    scene: Option<SceneModel>,
 }
 
 /// A JSON null read as an absent field: the field's default. A source that
@@ -257,6 +307,42 @@ fn media(kind: Option<&str>) -> MediaKind {
     }
 }
 
+/// A session's scene; None without a room to draw it in. An actor without a
+/// sprite is left out.
+fn scene_of(
+    model: SceneModel,
+    sprite: &impl Fn(Option<String>) -> Option<PictureRef>,
+) -> Option<SessionScene> {
+    let room = model.room?;
+    let walk = room.walk.unwrap_or_default();
+    Some(SessionScene {
+        room: sprite(room.sprite)?,
+        frames: room.frames.unwrap_or(1).max(1),
+        fps: room.fps.unwrap_or(8),
+        walk: (walk.x, walk.y, walk.width, walk.height),
+        actors: model
+            .actors
+            .into_iter()
+            .filter_map(|a| {
+                Some(Actor {
+                    sprite: sprite(a.sprite)?,
+                    id: a.id,
+                    name: a.name,
+                    movement: a.movement.unwrap_or_else(|| "walk".into()),
+                    power: a.power.unwrap_or_else(|| "glow".into()),
+                    colour: a.color.unwrap_or_else(|| "#FFFFFF".into()),
+                    aura: a.aura.filter(|aura| !aura.is_empty()),
+                    state: match a.state.as_deref() {
+                        Some("asleep") => ActorState::Asleep,
+                        Some("alert") => ActorState::Alert,
+                        _ => ActorState::Walking,
+                    },
+                })
+            })
+            .collect(),
+    })
+}
+
 /// A status Cerebro does not name reads as idle: nothing to show for it.
 fn status(text: Option<&str>) -> SessionStatus {
     match text {
@@ -268,8 +354,18 @@ fn status(text: Option<&str>) -> SessionStatus {
 
 impl FeedFile {
     /// Turns the file into a snapshot. Jellyfin pictures are paths on the
-    /// Jellyfin server, made absolute with `jellyfin`.
-    pub fn into_snapshot(self, jellyfin: &str) -> Snapshot {
+    /// Jellyfin server, made absolute with `jellyfin`; Cerebro's sprites are
+    /// paths on the home page (`hub`, its origin), which passes them on.
+    pub fn into_snapshot(self, jellyfin: &str, hub: &str) -> Snapshot {
+        let sprite = |path: Option<String>| {
+            path.filter(|path| !path.is_empty()).map(|path| {
+                if path.starts_with("http") {
+                    PictureRef::new(path)
+                } else {
+                    PictureRef::new(format!("{hub}{path}"))
+                }
+            })
+        };
         let picture = |path: Option<String>| {
             path.filter(|path| !path.is_empty()).map(|path| {
                 if path.starts_with("http") {
@@ -411,6 +507,9 @@ impl FeedFile {
                 })
                 .unwrap_or_default(),
             cerebro: self.cerebro.map(|cerebro| Cerebro {
+                room_size: cerebro.room_size.unwrap_or((192, 120)),
+                character_size: cerebro.character_size.unwrap_or((24, 24)),
+                emotes: sprite(cerebro.emotes),
                 sessions: cerebro
                     .sessions
                     .into_iter()
@@ -422,6 +521,7 @@ impl FeedFile {
                         room: s.room,
                         lead: s.lead,
                         agents: s.agents,
+                        scene: s.scene.and_then(|scene| scene_of(scene, &sprite)),
                     })
                     .collect(),
             }),
@@ -525,7 +625,7 @@ mod tests {
     fn snapshot() -> Snapshot {
         serde_json::from_str::<FeedFile>(SAMPLE)
             .unwrap()
-            .into_snapshot("http://media.local:8096")
+            .into_snapshot("http://media.local:8096", "http://media.local")
     }
 
     #[test]
@@ -573,6 +673,27 @@ mod tests {
     }
 
     #[test]
+    fn a_scene_takes_its_sprites_from_the_hub() {
+        let cerebro = snapshot().cerebro.unwrap();
+        let scene = cerebro.sessions[0].scene.clone().unwrap();
+        assert_eq!(
+            scene.room.as_str(),
+            "http://media.local/cerebro/rooms/danger-room.png"
+        );
+        assert_eq!(
+            (scene.frames, scene.fps, scene.walk),
+            (16, 8, (10, 76, 172, 40))
+        );
+        assert_eq!(scene.actors[0].state, ActorState::Alert);
+        assert_eq!(scene.actors[0].power, "beam");
+        assert_eq!(
+            cerebro.emotes.unwrap().as_str(),
+            "http://media.local/cerebro/ui/emotes.png"
+        );
+        assert_eq!(cerebro.sessions[2].scene, None);
+    }
+
+    #[test]
     fn a_session_waiting_is_an_event() {
         let waiting = snapshot().events.into_iter().find_map(|e| match e.kind {
             EventKind::Waiting { name, .. } => Some(name),
@@ -586,7 +707,7 @@ mod tests {
         let file = r#"{"cerebro": null}"#;
         let snapshot = serde_json::from_str::<FeedFile>(file)
             .unwrap()
-            .into_snapshot("");
+            .into_snapshot("", "");
         assert_eq!(snapshot.cerebro, None);
     }
 
@@ -616,7 +737,7 @@ mod tests {
         let file = r#"{"settings": {"look": "", "follow_hub": false}}"#;
         let snapshot = serde_json::from_str::<FeedFile>(file)
             .unwrap()
-            .into_snapshot("");
+            .into_snapshot("", "");
         assert_eq!(snapshot.settings.look, None);
     }
 
@@ -634,7 +755,7 @@ mod tests {
                        "settings": {"look": null, "follow_hub": null}}"#;
         let snapshot = serde_json::from_str::<FeedFile>(file)
             .unwrap()
-            .into_snapshot("");
+            .into_snapshot("", "");
         let house = snapshot.house.unwrap();
         assert!(!house.projectors[0].on);
         assert!(!snapshot.playing[0].paused);
@@ -647,7 +768,7 @@ mod tests {
                        "errors": {"house": null}}"#;
         let snapshot = serde_json::from_str::<FeedFile>(file)
             .unwrap()
-            .into_snapshot("");
+            .into_snapshot("", "");
         assert_eq!(snapshot.events.len(), 1);
         assert_eq!(snapshot.warnings, vec!["house: ".to_owned()]);
     }
@@ -656,7 +777,7 @@ mod tests {
     fn an_empty_file_is_an_empty_snapshot() {
         let snapshot = serde_json::from_str::<FeedFile>("{}")
             .unwrap()
-            .into_snapshot("");
+            .into_snapshot("", "");
         assert_eq!(snapshot, Snapshot::default());
     }
 }

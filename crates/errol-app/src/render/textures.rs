@@ -1,6 +1,7 @@
 //! Pictures on the GPU. A picture is uploaded once, the first frame it is
 //! there; a backdrop is blurred once, on the GPU, when uploaded; a photograph
-//! for the Gazette is turned sepia before. Beyond `KEEP` the oldest is
+//! for the Gazette is turned sepia before; a sprite sheet of Cerebro keeps its
+//! pixels, square. Beyond `KEEP` the oldest is
 //! dropped, and fetched again if it is wanted later.
 
 use std::collections::HashMap;
@@ -15,7 +16,7 @@ use crate::pictures::Pictures;
 /// How soft a blurred backdrop is.
 const BLUR: f32 = 5.0;
 /// Pictures kept on the GPU; beyond, the oldest go.
-const KEEP: usize = 24;
+const KEEP: usize = 64;
 
 /// What is done to a picture once decoded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -25,6 +26,9 @@ pub enum Finish {
     Blur,
     /// Sepia, as the Gazette prints its photographs.
     Print,
+    /// Pixel art (Cerebro's sprites): read at full size, scaled without
+    /// smoothing.
+    Pixel,
 }
 
 pub struct Textures<'a> {
@@ -73,7 +77,12 @@ impl<'a> Textures<'a> {
             decoded.width as usize,
             decoded.height as usize,
         );
-        let mut image = canvas.create_image(source, ImageFlags::empty()).ok()?;
+        let flags = if finish == Finish::Pixel {
+            ImageFlags::NEAREST
+        } else {
+            ImageFlags::empty()
+        };
+        let mut image = canvas.create_image(source, flags).ok()?;
         if finish == Finish::Blur {
             let soft = canvas
                 .create_image_empty(
