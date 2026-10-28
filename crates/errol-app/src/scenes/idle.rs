@@ -15,7 +15,7 @@ use crate::look::{fade, mix};
 use crate::render::{Anchor, Face, Finish, Gfx, Textures, Type, ink};
 
 /// Seconds a card stays.
-const CARD_TIME: f32 = 12.0;
+const CARD_TIME: f32 = 7.0;
 /// Seconds a card takes to slide in or out.
 const SLIDE: f32 = 0.8;
 const CARD_X: f32 = 286.0;

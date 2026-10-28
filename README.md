@@ -49,7 +49,7 @@ copy of it, built into the binary.
 
 | Scene | When | For how long |
 | :--- | :--- | :--- |
-| Idle | nothing else | A clock in its turning rings, and cards that slide by every 12 s: the next One Piece chapter with a countdown, the portfolio, the house, the Mac's Claude Code sessions, downloads, latest additions with their posters, the server's free space |
+| Idle | nothing else | A clock in its turning rings, and cards that slide by every 7 s: the next One Piece chapter with a countdown, the portfolio, the house, the Mac's Claude Code sessions, downloads, latest additions with their posters, the server's free space |
 | Event | a lamp switches; the projection screen moves (its cloth comes down live); the projector starts or changes app; a download finishes; a film or an episode is imported; a new chapter is out; a Claude Code session waits for an answer | 25 s for a lamp, 40 s for the screen, the projector and a session, 90 s for downloads and imports, 2 min for a chapter. A new event cuts the one on screen short and shows at once; those still waiting follow it, and a burst (ten episodes imported at once) takes a single turn |
 | Cinema | a video plays on Jellyfin | Until it stops: the blurred backdrop drifting, the poster in a holographic frame, the story, progress and end time |
 
