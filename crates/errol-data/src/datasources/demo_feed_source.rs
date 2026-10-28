@@ -1,6 +1,7 @@
 //! A made-up evening, to see every scene without waiting for the house:
 //! a neon switches on, the projection screen comes down, the projector starts,
-//! a film plays, an episode and a download arrive, a new scan is out. Pictures
+//! a film plays, a Claude Code session waits for an answer, an episode and a
+//! download arrive, a new scan is out. Pictures
 //! come from TMDB. `DemoScene` other than `All` holds a single scene.
 
 use std::sync::Arc;
@@ -8,9 +9,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use errol_domain::DomainError;
 use errol_domain::entities::{
-    Chapter, Cover, Disk, Download, Event, EventId, EventKind, House, Import, MediaKind,
+    Cerebro, Chapter, Cover, Disk, Download, Event, EventId, EventKind, House, Import, MediaKind,
     NextChapter, OnePiece, Outlet, PictureRef, Playing, Portfolio, Position, Projector, Services,
-    Snapshot, Timestamp,
+    Session, SessionStatus, Snapshot, Timestamp,
 };
 use errol_domain::ports::{Clock, FeedSource};
 
@@ -29,6 +30,7 @@ pub enum DemoScene {
     Import,
     Download,
     Scan,
+    Cerebro,
 }
 
 impl DemoScene {
@@ -43,6 +45,7 @@ impl DemoScene {
             "import" => Self::Import,
             "download" => Self::Download,
             "scan" => Self::Scan,
+            "cerebro" => Self::Cerebro,
             _ => return None,
         })
     }
@@ -94,6 +97,15 @@ fn timeline() -> Vec<(f64, DemoScene, EventKind)> {
                 name: "Projecteur".into(),
                 on: true,
                 app: Some("Jellyfin".into()),
+            },
+        ),
+        (
+            122.0,
+            DemoScene::Cerebro,
+            EventKind::Waiting {
+                name: "errol-8b".into(),
+                project: Some("~/personal/errol".into()),
+                room: Some("Danger Room".into()),
             },
         ),
         (150.0, DemoScene::Import, EventKind::Import(arcane())),
@@ -248,6 +260,37 @@ fn base(now: Timestamp) -> Snapshot {
             free: 450_000_000_000,
         }),
         services: Services { up: 18, total: 18 },
+        cerebro: Some(Cerebro {
+            sessions: vec![
+                Session {
+                    name: "errol-8b".into(),
+                    project: Some("~/personal/errol".into()),
+                    status: SessionStatus::Busy,
+                    since: Some(now.plus_secs(-754.0)),
+                    room: Some("Danger Room".into()),
+                    lead: Some("Cyclops".into()),
+                    agents: 0,
+                },
+                Session {
+                    name: "skylink-41".into(),
+                    project: Some("~/dronevolt/skylink".into()),
+                    status: SessionStatus::Busy,
+                    since: Some(now.plus_secs(-2_410.0)),
+                    room: Some("Rooftop Helipad".into()),
+                    lead: Some("Havok".into()),
+                    agents: 2,
+                },
+                Session {
+                    name: "pensieve-3c".into(),
+                    project: Some("~/personal/pensieve".into()),
+                    status: SessionStatus::Idle,
+                    since: None,
+                    room: Some("Library".into()),
+                    lead: Some("Beast".into()),
+                    agents: 0,
+                },
+            ],
+        }),
         ..Snapshot::default()
     }
 }
@@ -298,6 +341,13 @@ impl FeedSource for DemoFeedSource {
                 house.projectors[0].on = true;
                 house.projectors[0].app = Some("Jellyfin".into());
             }
+        }
+        // the session that asked is waiting until the end of the evening
+        if let Some(cerebro) = snapshot.cerebro.as_mut().filter(|_| at >= 122.0) {
+            cerebro.sessions[0].status = SessionStatus::Waiting;
+            cerebro
+                .sessions
+                .sort_by_key(|s| s.status != SessionStatus::Waiting);
         }
         if at >= 110.0 || self.scene == DemoScene::Cinema {
             snapshot

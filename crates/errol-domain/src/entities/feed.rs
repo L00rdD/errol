@@ -18,6 +18,8 @@ pub struct Snapshot {
     pub portfolio: Option<Portfolio>,
     pub disk: Option<Disk>,
     pub services: Services,
+    /// The Claude Code sessions of the Mac, while Cerebro answers.
+    pub cerebro: Option<Cerebro>,
     /// Sources the feed could not read, with the reason.
     pub warnings: Vec<String>,
     /// What the user asked of the screen, through the feed (its remote control).
@@ -213,4 +215,48 @@ pub struct Disk {
 pub struct Services {
     pub up: u32,
     pub total: u32,
+}
+
+/// The Claude Code sessions running on the Mac, as Cerebro shows them: those
+/// waiting for an answer first, then those working.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Cerebro {
+    pub sessions: Vec<Session>,
+}
+
+impl Cerebro {
+    /// How many sessions are in `status`.
+    pub fn count(&self, status: SessionStatus) -> usize {
+        self.sessions
+            .iter()
+            .filter(|session| session.status == status)
+            .count()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionStatus {
+    /// Claude is working.
+    Busy,
+    /// Claude waits for an answer (a permission to give).
+    Waiting,
+    /// Claude has finished and waits for the next prompt.
+    Idle,
+}
+
+/// A Claude Code session, in its room of the X-Mansion.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Session {
+    pub name: String,
+    /// The folder it works in, `~/…`.
+    pub project: Option<String>,
+    pub status: SessionStatus,
+    /// Since when it is in that status.
+    pub since: Option<Timestamp>,
+    /// Its room of the X-Mansion (Danger Room…).
+    pub room: Option<String>,
+    /// The X-Man who leads it.
+    pub lead: Option<String>,
+    /// Subagents it runs now.
+    pub agents: u32,
 }

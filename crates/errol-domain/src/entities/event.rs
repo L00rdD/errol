@@ -44,6 +44,12 @@ pub enum EventKind {
     Import(Import),
     /// A new One Piece scan is out.
     Scan(Chapter),
+    /// A Claude Code session on the Mac waits for an answer (Cerebro).
+    Waiting {
+        name: String,
+        project: Option<String>,
+        room: Option<String>,
+    },
     /// A video started on Jellyfin (the cinema scene shows it; no takeover).
     Play { title: String },
 }

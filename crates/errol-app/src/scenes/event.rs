@@ -1,6 +1,6 @@
 //! An event takes the screen: a picture of what happened on the left (a lamp,
 //! the projection screen, the projector's beam, a poster, a check, a chapter
-//! number), what it is on the right, and a bar draining until the next scene.
+//! number, a question from Claude), what it is on the right, and a bar draining until the next scene.
 //! On the Map it is a notice of the Gazette pinned over the castle, its tags
 //! stamped in red ink.
 
@@ -290,6 +290,24 @@ fn visual(
                 tags,
             )
         }
+        EventKind::Waiting {
+            name,
+            project,
+            room,
+        } => {
+            halos(gfx, age);
+            question(gfx);
+            let sub = match project {
+                Some(project) => format!("attend ta réponse · {project}"),
+                None => "attend ta réponse".into(),
+            };
+            (
+                "Claude Code · Cerebro".into(),
+                name.clone(),
+                sub,
+                room.iter().cloned().collect(),
+            )
+        }
         EventKind::Play { title } => ("Lecture".into(), title.clone(), String::new(), vec![]),
     }
 }
@@ -319,6 +337,49 @@ fn halos(gfx: &mut Gfx, age: f32) {
             gfx.ring(CX, CY, size, 1.0, fade(colour, alpha * 0.6), &[], 0.0, TAU);
         }
     }
+}
+
+/// A question mark beating like a call: Claude asks something. Split in
+/// cyberpunk, in red ink on the Map, glowing in friday.
+fn question(gfx: &mut Gfx) {
+    let beat = 1.0 + 0.06 * (gfx.t * 3.2).sin().max(0.0);
+    gfx.canvas.save();
+    gfx.canvas.translate(CX, CY);
+    gfx.canvas.scale(beat, beat);
+    gfx.canvas.translate(-CX, -CY);
+    if gfx.cyber() {
+        gfx.split_text(
+            CX,
+            CY,
+            "?",
+            Type::new(Face::Bold, 150.0),
+            gfx.palette.hot,
+            Anchor::MIDDLE_CENTER,
+            1.0,
+        );
+    } else if gfx.hogwarts() {
+        gfx.text(
+            CX,
+            CY,
+            "?",
+            Type::new(Face::Display, 120.0),
+            gfx.palette.accent2,
+            Anchor::MIDDLE_CENTER,
+        );
+    } else {
+        let colour = gfx.palette.accent2;
+        gfx.halo(CX, CY, 150.0, fade(colour, 0.18));
+        gfx.glow_text(
+            CX,
+            CY,
+            "?",
+            Type::new(Face::Display, 110.0),
+            colour,
+            Anchor::MIDDLE_CENTER,
+            2.5,
+        );
+    }
+    gfx.canvas.restore();
 }
 
 fn bulb(gfx: &mut Gfx, on: bool) {

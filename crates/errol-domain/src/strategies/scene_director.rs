@@ -40,7 +40,9 @@ impl SceneDirector {
     pub fn duration(kind: &EventKind) -> Option<f64> {
         match kind {
             EventKind::Light { .. } => Some(25.0),
-            EventKind::Cover { .. } | EventKind::Projector { .. } => Some(40.0),
+            EventKind::Cover { .. } | EventKind::Projector { .. } | EventKind::Waiting { .. } => {
+                Some(40.0)
+            }
             EventKind::Download { .. } | EventKind::Import(_) => Some(90.0),
             EventKind::Scan(_) => Some(120.0),
             EventKind::Play { .. } => None,

@@ -2,9 +2,9 @@ use std::collections::BTreeMap;
 
 use chrono::DateTime;
 use errol_domain::entities::{
-    Chapter, Cover, Disk, Download, Event, EventId, EventKind, House, Import, MediaKind,
+    Cerebro, Chapter, Cover, Disk, Download, Event, EventId, EventKind, House, Import, MediaKind,
     NextChapter, OnePiece, Outlet, PictureRef, Playing, Portfolio, Position, Projector, Services,
-    Settings, Snapshot, Timestamp,
+    Session, SessionStatus, Settings, Snapshot, Timestamp,
 };
 use serde::{Deserialize, Deserializer};
 use serde_json::Value;
@@ -27,6 +27,7 @@ pub struct FeedFile {
     portfolio: Option<PortfolioModel>,
     disk: Option<DiskModel>,
     services: Option<ServicesModel>,
+    cerebro: Option<CerebroModel>,
     #[serde(deserialize_with = "nullable")]
     errors: BTreeMap<String, Option<String>>,
     settings: Option<SettingsModel>,
@@ -210,6 +211,27 @@ struct ServicesModel {
     total: u32,
 }
 
+#[derive(Debug, Deserialize, Default)]
+#[serde(default)]
+struct CerebroModel {
+    #[serde(deserialize_with = "nullable")]
+    sessions: Vec<SessionModel>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(default)]
+struct SessionModel {
+    #[serde(deserialize_with = "nullable")]
+    name: String,
+    project: Option<String>,
+    status: Option<String>,
+    since: Option<String>,
+    room: Option<String>,
+    lead: Option<String>,
+    #[serde(deserialize_with = "nullable")]
+    agents: u32,
+}
+
 /// A JSON null read as an absent field: the field's default. A source that
 /// answers `"on": null` (a projector just after a reboot) must not make the
 /// whole file unreadable.
@@ -232,6 +254,15 @@ fn media(kind: Option<&str>) -> MediaKind {
         MediaKind::Episode
     } else {
         MediaKind::Movie
+    }
+}
+
+/// A status Cerebro does not name reads as idle: nothing to show for it.
+fn status(text: Option<&str>) -> SessionStatus {
+    match text {
+        Some("busy") => SessionStatus::Busy,
+        Some("waiting") => SessionStatus::Waiting,
+        _ => SessionStatus::Idle,
     }
 }
 
@@ -379,6 +410,21 @@ impl FeedFile {
                     total: s.total,
                 })
                 .unwrap_or_default(),
+            cerebro: self.cerebro.map(|cerebro| Cerebro {
+                sessions: cerebro
+                    .sessions
+                    .into_iter()
+                    .map(|s| Session {
+                        status: status(s.status.as_deref()),
+                        since: parse_time(s.since.as_deref()),
+                        name: s.name,
+                        project: s.project.filter(|project| !project.is_empty()),
+                        room: s.room,
+                        lead: s.lead,
+                        agents: s.agents,
+                    })
+                    .collect(),
+            }),
             warnings: self
                 .errors
                 .into_iter()
@@ -451,6 +497,11 @@ fn event(fields: &BTreeMap<String, Value>) -> Option<Event> {
             arc: text("arc"),
             pages: number("pages").map(|pages| pages as u32),
         }),
+        "cerebro" => EventKind::Waiting {
+            name: text("name").unwrap_or_default(),
+            project: text("project"),
+            room: text("room"),
+        },
         "play" => EventKind::Play {
             title: text("title").unwrap_or_default(),
         },
@@ -493,7 +544,7 @@ mod tests {
             .iter()
             .map(|e| std::mem::discriminant(&e.kind))
             .collect();
-        assert_eq!(kinds.len(), 3);
+        assert_eq!(kinds.len(), 4);
     }
 
     #[test]
@@ -503,6 +554,40 @@ mod tests {
             _ => None,
         });
         assert_eq!(up, Some(false));
+    }
+
+    #[test]
+    fn the_cerebro_sessions_are_read_with_their_status() {
+        let cerebro = snapshot().cerebro.unwrap();
+        let statuses: Vec<_> = cerebro.sessions.iter().map(|s| s.status).collect();
+        assert_eq!(
+            statuses,
+            [
+                SessionStatus::Waiting,
+                SessionStatus::Busy,
+                SessionStatus::Idle
+            ]
+        );
+        assert_eq!(cerebro.sessions[0].room.as_deref(), Some("Danger Room"));
+        assert_eq!(cerebro.sessions[1].agents, 2);
+    }
+
+    #[test]
+    fn a_session_waiting_is_an_event() {
+        let waiting = snapshot().events.into_iter().find_map(|e| match e.kind {
+            EventKind::Waiting { name, .. } => Some(name),
+            _ => None,
+        });
+        assert_eq!(waiting.as_deref(), Some("errol-8b"));
+    }
+
+    #[test]
+    fn without_cerebro_there_is_no_cerebro() {
+        let file = r#"{"cerebro": null}"#;
+        let snapshot = serde_json::from_str::<FeedFile>(file)
+            .unwrap()
+            .into_snapshot("");
+        assert_eq!(snapshot.cerebro, None);
     }
 
     #[test]

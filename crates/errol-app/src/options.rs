@@ -21,7 +21,7 @@ pub struct Options {
     pub shot_after: f64,
 }
 
-const USAGE: &str = "usage: errol [--look friday|cyberpunk|hogwarts] [--demo [all|idle|light|cover|projector|cinema|import|download|scan]]
+const USAGE: &str = "usage: errol [--look friday|cyberpunk|hogwarts] [--demo [all|idle|light|cover|projector|cinema|import|download|scan|cerebro]]
                 [--feed URL] [--jellyfin URL] [--window] [--fps N] [--shot FILE.png [--after SECS]]
 environment: ERROL_LOOK, ERROL_FEED, ERROL_JELLYFIN, ERROL_FPS";
 

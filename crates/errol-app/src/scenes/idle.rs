@@ -1,10 +1,11 @@
 //! The idle recap: a clock in its rings (the Time-Turner on the Map), and a
-//! carousel of cards (One Piece, a trading bot, the house, downloads, the
-//! latest additions, the server), rooms of the castle on the Map.
+//! carousel of cards (One Piece, a trading bot, the house, the Claude Code
+//! sessions of the Mac, downloads, the latest additions, the server), rooms
+//! of the castle on the Map.
 
 use std::f32::consts::TAU;
 
-use errol_domain::entities::{MediaKind, Snapshot};
+use errol_domain::entities::{Cerebro, MediaKind, SessionStatus, Snapshot};
 use errol_domain::usecases::View;
 use femtovg::Color;
 
@@ -34,6 +35,7 @@ enum Card {
     OnePiece,
     Portfolio,
     House,
+    Cerebro,
     Downloads,
     Recent,
     Server,
@@ -46,6 +48,7 @@ impl Card {
             Self::OnePiece => "Bibliothèque",
             Self::Portfolio => "Cachots",
             Self::House => "Grande Salle",
+            Self::Cerebro => "Bureau de Dumbledore",
             Self::Downloads => "Volière",
             Self::Recent => "Salle sur Demande",
             Self::Server => "Tour d'astronomie",
@@ -73,6 +76,13 @@ fn cards(snapshot: &Snapshot) -> Vec<Card> {
     }
     if snapshot.house.is_some() {
         cards.push(Card::House);
+    }
+    if snapshot
+        .cerebro
+        .as_ref()
+        .is_some_and(|cerebro| !cerebro.sessions.is_empty())
+    {
+        cards.push(Card::Cerebro);
     }
     if !snapshot.downloads.is_empty() {
         cards.push(Card::Downloads);
@@ -544,6 +554,40 @@ fn scoreboard(
     14.0 + h + 7.0 + 14.0
 }
 
+/// What the sessions do, in a few words: those waiting for an answer first.
+fn summary(cerebro: &Cerebro) -> (String, SessionStatus) {
+    let (waiting, busy) = (
+        cerebro.count(SessionStatus::Waiting),
+        cerebro.count(SessionStatus::Busy),
+    );
+    if waiting > 0 {
+        let verb = if waiting > 1 {
+            "t'attendent"
+        } else {
+            "t'attend"
+        };
+        (format!("{waiting} {verb}"), SessionStatus::Waiting)
+    } else if busy > 0 {
+        let verb = if busy > 1 { "travaillent" } else { "travaille" };
+        (format!("{busy} {verb}"), SessionStatus::Busy)
+    } else {
+        ("Au repos".into(), SessionStatus::Idle)
+    }
+}
+
+/// A session's status, and for how long.
+fn status(status: SessionStatus, since: Option<f64>) -> String {
+    let word = match status {
+        SessionStatus::Waiting => "t'attend",
+        SessionStatus::Busy => "travaille",
+        SessionStatus::Idle => "au repos",
+    };
+    match since.filter(|_| status != SessionStatus::Idle) {
+        Some(secs) => format!("{word} · {}", text::duration(secs)),
+        None => word.to_owned(),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn draw_card(
     gfx: &mut Gfx,
@@ -829,6 +873,60 @@ fn draw_card(
                         Type::new(Face::Body, 16.0),
                         if *on { palette.text } else { palette.muted },
                         Anchor::MIDDLE_LEFT,
+                    );
+                }
+            }
+        }
+        Card::Cerebro => {
+            if let Some(cerebro) = &snapshot.cerebro {
+                let colour_of = |status| match status {
+                    SessionStatus::Waiting => palette.hot,
+                    SessionStatus::Busy => palette.ok,
+                    SessionStatus::Idle => palette.muted,
+                };
+                gfx.kicker(left, top, "Cerebro · Claude Code", kicker);
+                let (said, most) = summary(cerebro);
+                let mut y = if map {
+                    // the score of the Mac: sessions, at work, waiting for you
+                    let waiting = cerebro.count(SessionStatus::Waiting);
+                    let busy = cerebro.count(SessionStatus::Busy);
+                    let plates = [
+                        (
+                            cerebro.sessions.len().to_string(),
+                            "sessions".to_owned(),
+                            true,
+                        ),
+                        (busy.to_string(), "au travail".to_owned(), busy > 0),
+                        (waiting.to_string(), "t'attendent".to_owned(), waiting > 0),
+                    ];
+                    top + 26.0 + scoreboard(gfx, left, top + 26.0, CARD_W - 44.0, &plates, 3) + 4.0
+                        - 32.0
+                } else {
+                    let colour = if most == SessionStatus::Idle {
+                        palette.accent
+                    } else {
+                        colour_of(most)
+                    };
+                    big(gfx, left, top + 22.0, &said, colour);
+                    top + 92.0 - 32.0
+                };
+                let rows = if map { 4 } else { 5 };
+                for session in cerebro.sessions.iter().take(rows) {
+                    y += 32.0;
+                    let label = match (&session.room, session.agents) {
+                        (Some(room), 0) => format!("{} · {room}", session.name),
+                        (Some(room), agents) => format!("{} · {room} · +{agents}", session.name),
+                        (None, 0) => session.name.clone(),
+                        (None, agents) => format!("{} · +{agents}", session.name),
+                    };
+                    let since = session.since.map(|since| view.now.secs_since(since));
+                    row(
+                        gfx,
+                        left,
+                        y,
+                        &label,
+                        &status(session.status, since),
+                        colour_of(session.status),
                     );
                 }
             }
