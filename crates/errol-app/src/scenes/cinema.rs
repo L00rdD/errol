@@ -1,6 +1,7 @@
 //! A video plays on Jellyfin: its backdrop, blurred and drifting, behind the
 //! poster, the title, the story, and where the playback is (a braindance
-//! editor's tracks in cyberpunk).
+//! editor's tracks in cyberpunk). On the Map it is the Gazette's front page,
+//! pinned over the castle, the poster its photograph.
 
 use errol_domain::entities::{MediaKind, Playing};
 use errol_domain::usecases::View;
@@ -10,17 +11,23 @@ use super::event::poster;
 use super::{BOTTOM, HEIGHT, TOP, WIDTH, text};
 use crate::anim::{decode, ease_in_out, ease_out, progress};
 use crate::look::{fade, mix, rgb};
-use crate::render::{Anchor, Face, Gfx, Textures, Type};
+use crate::render::{Anchor, Face, Finish, Gfx, Textures, Type, ink};
 
 const INFO_X: f32 = 266.0;
 const INFO_W: f32 = 504.0;
+/// The Gazette's page pinned to the Map: x, y, w, h.
+const PAGE: (f32, f32, f32, f32) = (30.0, TOP + 12.0, 740.0, BOTTOM - TOP - 28.0);
 
 pub fn draw(gfx: &mut Gfx, view: &View, playing: &Playing, age: f32, textures: &mut Textures) {
+    if gfx.hogwarts() {
+        gazette(gfx, view, playing, age, textures);
+        return;
+    }
     let palette = gfx.palette;
     if let Some(image) = playing
         .backdrop
         .as_ref()
-        .and_then(|backdrop| textures.get(gfx.canvas, backdrop, 480, true))
+        .and_then(|backdrop| textures.get(gfx.canvas, backdrop, 480, Finish::Blur))
     {
         // a slow drift, 40 s each way
         let k = ease_in_out(((gfx.t / 40.0) % 2.0 - 1.0).abs());
@@ -57,31 +64,15 @@ pub fn draw(gfx: &mut Gfx, view: &View, playing: &Playing, age: f32, textures: &
     if let Some(image) = playing
         .poster
         .as_ref()
-        .and_then(|p| textures.get(gfx.canvas, p, 400, false))
+        .and_then(|p| textures.get(gfx.canvas, p, 400, Finish::Plain))
     {
         poster(gfx, image, px, py, pw, ph, age);
     }
 
-    if gfx.hogwarts() {
-        // the candles of the hall float behind the words: a shadow keeps them readable
-        let mut shade = Path::new();
-        shade.rect(INFO_X - 24.0, TOP, WIDTH - INFO_X + 24.0, BOTTOM - TOP);
-        let dark = Paint::linear_gradient(
-            INFO_X - 24.0,
-            0.0,
-            INFO_X + 40.0,
-            0.0,
-            fade(palette.bg, 0.0),
-            fade(palette.bg, 0.72),
-        );
-        gfx.canvas.fill_path(&shade, &dark);
-    }
     let slide = |delay: f32| 30.0 * (1.0 - ease_out(progress(age - delay, 0.9)));
     let mut y = TOP + 34.0;
     let kicker = if gfx.cyber() {
         "Braindance · lecture"
-    } else if gfx.hogwarts() {
-        "La Pensine"
     } else {
         "En projection"
     };
@@ -132,8 +123,6 @@ pub fn draw(gfx: &mut Gfx, view: &View, playing: &Playing, age: f32, textures: &
             style,
             if gfx.cyber() {
                 palette.hot
-            } else if gfx.hogwarts() {
-                palette.accent
             } else {
                 palette.text
             },
@@ -157,11 +146,7 @@ pub fn draw(gfx: &mut Gfx, view: &View, playing: &Playing, age: f32, textures: &
         INFO_X + slide(0.2),
         y,
         &sub,
-        if gfx.hogwarts() {
-            Type::new(Face::Italic, 20.0)
-        } else {
-            Type::new(Face::Strong, 19.0)
-        },
+        Type::new(Face::Strong, 19.0),
         palette.accent2,
         Anchor::TOP_LEFT,
     );
@@ -192,11 +177,7 @@ pub fn draw(gfx: &mut Gfx, view: &View, playing: &Playing, age: f32, textures: &
         y,
         &playing.overview,
         INFO_W,
-        if gfx.hogwarts() {
-            Type::new(Face::Italic, 16.0)
-        } else {
-            Type::new(Face::Body, 15.5)
-        },
+        Type::new(Face::Body, 15.5),
         19.5,
         fade(palette.text, 0.85),
         3,
@@ -333,4 +314,223 @@ fn tracks(gfx: &mut Gfx, y: f32, share: f32) {
         gfx.canvas.fill_path(&band, &glare);
         gfx.rect(x + w * share - 1.0, ty - 2.0, 2.0, 14.0, rgb(0xffffff));
     }
+}
+
+/// The Gazette's front page: the poster as its photograph, the masthead, the
+/// headline (what plays), the deck (when it ends), the story in two columns,
+/// and where the playback is, as a rule filling with ink.
+fn gazette(gfx: &mut Gfx, view: &View, playing: &Playing, age: f32, textures: &mut Textures) {
+    let (px, py, pw, ph) = PAGE;
+    gfx.pinned(px, py, pw, ph, -0.35);
+    let news = ink::news_ink();
+    let fade_in = ease_out(progress(age, 0.8));
+    // the photograph
+    let (fx, fy, fw, fh) = (px + 18.0, py + 16.0, 200.0, 300.0);
+    if let Some(image) = playing
+        .poster
+        .as_ref()
+        .and_then(|p| textures.get(gfx.canvas, p, 400, Finish::Print))
+    {
+        gfx.photo(image, fx, fy, fw, fh, fade_in);
+    } else {
+        gfx.rect(fx, fy, fw, fh, rgb(0xd8c9a6));
+        gfx.rect_line(fx, fy, fw, fh, news, 1.0);
+    }
+    let small = Type::new(Face::Italic, 11.0);
+    gfx.text(
+        fx,
+        fy + fh + 8.0,
+        "Photographié sur le plateau.",
+        small,
+        news,
+        Anchor::TOP_LEFT,
+    );
+    // the masthead
+    let (x, right) = (fx + fw + 28.0, px + pw - 24.0);
+    let w = right - x;
+    gfx.rect(x, py + 18.0, w, 3.0, news);
+    gfx.text(
+        x,
+        py + 28.0,
+        "Édition spéciale",
+        small,
+        news,
+        Anchor::TOP_LEFT,
+    );
+    gfx.text(
+        f32::midpoint(x, right),
+        py + 26.0,
+        "La Gazette du Sorcier",
+        Type::new(Face::Body, 21.0).spaced(1.2),
+        news,
+        Anchor::TOP_CENTER,
+    );
+    let day = text::date(view.now);
+    let weekday = day.split(' ').next().unwrap_or_default();
+    gfx.text(right, py + 28.0, weekday, small, news, Anchor::TOP_RIGHT);
+    gfx.rect(x, py + 52.0, w, 1.0, news);
+    gfx.rect(x, py + 55.0, w, 1.0, news);
+    // the headline, written as the page comes
+    let mut y = py + 62.0;
+    let name = playing
+        .series
+        .clone()
+        .unwrap_or_else(|| playing.title.clone());
+    let head = Type::new(Face::Body, 28.0);
+    for line in gfx.wrap(&name, w, head, 2) {
+        let shown = decode(&line, age - 0.1, 1.2, "");
+        gfx.text(x, y, &shown, head, news, Anchor::TOP_LEFT);
+        y += 33.0;
+    }
+    y += 4.0;
+    // the deck: what it is, and when it ends
+    let position = playing.position_at(view.read_at, view.now);
+    let what = match playing.kind {
+        MediaKind::Episode => format!(
+            "{} · {}",
+            text::episode(playing.season, playing.episode),
+            playing.title
+        ),
+        MediaKind::Movie => playing
+            .year
+            .map(|year| year.to_string())
+            .unwrap_or_default(),
+    };
+    let end = if playing.paused {
+        "la projection est en pause".to_owned()
+    } else if playing.runtime > 0.0 {
+        let at = view.now.plus_secs(playing.runtime - position);
+        let local = text::local(at);
+        format!(
+            "fin annoncée vers {}",
+            text::in_words(
+                chrono::Timelike::hour(&local),
+                chrono::Timelike::minute(&local)
+            )
+        )
+    } else {
+        String::new()
+    };
+    let deck: Vec<String> = [what, end]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect();
+    let deck_style = Type::new(Face::Italic, 15.0);
+    for line in gfx.wrap(&deck.join(" — "), w, deck_style, 1) {
+        gfx.text(x, y, &line, deck_style, rgb(0x3a2e20), Anchor::TOP_LEFT);
+    }
+    y += 24.0;
+    // the story, in two columns
+    let mut facts: Vec<String> = Vec::new();
+    if let Some(year) = playing.year.filter(|_| playing.kind == MediaKind::Episode) {
+        facts.push(year.to_string());
+    }
+    if playing.runtime > 0.0 {
+        facts.push(format!("{} minutes", (playing.runtime / 60.0).round()));
+    }
+    if let Some(genre) = playing.genres.first() {
+        facts.push(genre.clone());
+    }
+    let story = if facts.is_empty() {
+        playing.overview.clone()
+    } else {
+        format!("{}. {}", facts.join(" · "), playing.overview)
+    };
+    let body = Type::new(Face::Body, 12.5);
+    let column = (w - 26.0) / 2.0;
+    let lines = gfx.wrap(&story, column, body, 12);
+    let rows = 6;
+    for (index, line) in lines.iter().enumerate() {
+        let (cx, row) = if index < rows {
+            (x, index)
+        } else {
+            (x + column + 26.0, index - rows)
+        };
+        gfx.text(
+            cx,
+            y + row as f32 * 15.5,
+            line,
+            body,
+            rgb(0x2a2218),
+            Anchor::TOP_LEFT,
+        );
+    }
+    if lines.len() > rows {
+        gfx.rect(
+            x + column + 12.0,
+            y + 2.0,
+            1.0,
+            rows as f32 * 15.5 - 4.0,
+            news,
+        );
+    }
+    // where the playback is: a rule filling with ink
+    let share = if playing.runtime > 0.0 {
+        (position / playing.runtime) as f32
+    } else {
+        0.0
+    };
+    let blink = if playing.paused {
+        0.4 + 0.6 * (gfx.t * 2.0).sin().abs()
+    } else {
+        1.0
+    };
+    let by = py + ph - 52.0;
+    gfx.rect(x, by, w, 5.0, fade(news, 0.12));
+    gfx.rect(x, by, w * share, 5.0, fade(news, 0.85 * blink));
+    gfx.rect(x + w * share - 1.0, by - 4.0, 2.0, 13.0, ink::red());
+    let mono = Type::new(Face::Body, 11.5).spaced(1.0);
+    let ty = by + 12.0;
+    gfx.text(
+        x,
+        ty,
+        &text::duration(position),
+        mono,
+        news,
+        Anchor::TOP_LEFT,
+    );
+    let state = if playing.paused {
+        "EN PAUSE".to_owned()
+    } else if playing.runtime > 0.0 {
+        format!(
+            "FIN À {}",
+            text::clock(view.now.plus_secs(playing.runtime - position))
+        )
+    } else {
+        String::new()
+    };
+    gfx.text(
+        x + w / 2.0,
+        ty,
+        &state,
+        mono.spaced(2.5),
+        ink::red(),
+        Anchor::TOP_CENTER,
+    );
+    if playing.runtime > 0.0 {
+        gfx.text(
+            right,
+            ty,
+            &format!("-{}", text::duration(playing.runtime - position)),
+            mono,
+            news,
+            Anchor::TOP_RIGHT,
+        );
+    }
+    let foot: Vec<&str> = [
+        playing.device.as_str(),
+        playing.client.as_str(),
+        playing.user.as_str(),
+    ]
+    .into_iter()
+    .filter(|part| !part.is_empty())
+    .collect();
+    gfx.text(
+        x,
+        ty + 18.0,
+        &foot.join(" · ").to_uppercase(),
+        Type::new(Face::Body, 10.5).spaced(1.8),
+        fade(news, 0.8),
+        Anchor::TOP_LEFT,
+    );
 }

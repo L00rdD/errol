@@ -3,10 +3,8 @@
 //! draws on OpenGL ES 3 (Pi) or OpenGL 3.3 (Mac). The 800 × 480 stage is
 //! scaled to fit whatever the display is.
 
-mod crests;
 mod gfx;
-mod hall;
-mod svg;
+pub mod map;
 mod textures;
 
 use std::time::{Duration, Instant};
@@ -24,14 +22,13 @@ use crate::pictures::Pictures;
 use crate::scenes::{HEIGHT, Stage, WIDTH};
 
 pub use gfx::{Anchor, Face, Fonts, Gfx, Type};
-pub use hall::{CANDLE_HEIGHTS, FLAME_BASE, Hall, House, WICK};
-pub use textures::Textures;
+pub use map::{Map, ink};
+pub use textures::{Finish, Textures};
 
 const MICHROMA: &[u8] = include_bytes!("../../../../assets/fonts/Michroma-Regular.ttf");
 const RAJDHANI_MEDIUM: &[u8] = include_bytes!("../../../../assets/fonts/Rajdhani-Medium.ttf");
 const RAJDHANI_SEMIBOLD: &[u8] = include_bytes!("../../../../assets/fonts/Rajdhani-SemiBold.ttf");
 const RAJDHANI_BOLD: &[u8] = include_bytes!("../../../../assets/fonts/Rajdhani-Bold.ttf");
-const CINZEL: &[u8] = include_bytes!("../../../../assets/fonts/Cinzel.ttf");
 const FELL: &[u8] = include_bytes!("../../../../assets/fonts/IMFellEnglish-Regular.ttf");
 const FELL_ITALIC: &[u8] = include_bytes!("../../../../assets/fonts/IMFellEnglish-Italic.ttf");
 
@@ -88,15 +85,14 @@ pub fn run(options: &Options, observe: &ObserveFeed, pictures: &Pictures) -> Res
         medium: font(RAJDHANI_MEDIUM)?,
         semibold: font(RAJDHANI_SEMIBOLD)?,
         bold: font(RAJDHANI_BOLD)?,
-        cinzel: font(CINZEL)?,
         fell: font(FELL)?,
         fell_italic: font(FELL_ITALIC)?,
     };
 
     let mut look = options.look;
-    // the Great Hall's sprites, baked the first time the look is hogwarts
-    let mut hall: Option<Hall> = None;
-    let mut hall_failed = false;
+    // the Map's images, baked the first time the look is hogwarts
+    let mut map: Option<Map> = None;
+    let mut map_failed = false;
     let mut stage = Stage::new(look);
     let mut textures = Textures::new(pictures);
     let mut events = sdl.event_pump()?;
@@ -121,16 +117,16 @@ pub fn run(options: &Options, observe: &ObserveFeed, pictures: &Pictures) -> Res
         let (logical, _) = window.size();
         let dpi = width as f32 / logical.max(1) as f32;
         canvas.set_size(width, height, dpi);
-        if look == Look::Hogwarts && hall.is_none() && !hall_failed {
-            match Hall::bake(&mut canvas, &fonts) {
+        if look == Look::Hogwarts && map.is_none() && !map_failed {
+            match Map::bake(&mut canvas, &fonts) {
                 Ok(baked) => {
-                    // the sprites are drawn now, before anything uses them
+                    // the images are drawn now, before anything uses them
                     canvas.flush();
-                    hall = Some(baked);
+                    map = Some(baked);
                 }
                 Err(error) => {
                     eprintln!("errol: {error}");
-                    hall_failed = true;
+                    map_failed = true;
                 }
             }
         }
@@ -165,7 +161,7 @@ pub fn run(options: &Options, observe: &ObserveFeed, pictures: &Pictures) -> Res
             look,
             palette: look.palette(),
             t,
-            hall: hall.as_ref().filter(|_| look == Look::Hogwarts),
+            map: map.as_ref().filter(|_| look == Look::Hogwarts),
             alpha: 1.0,
         };
         stage.draw(&mut gfx, &view, &mut textures, dt);

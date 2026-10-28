@@ -19,15 +19,18 @@ pub struct Ticker {
 impl Ticker {
     pub fn draw(&mut self, gfx: &mut Gfx, view: &View, dt: f32) {
         let palette = gfx.palette;
-        let line = if gfx.cyber() {
-            palette.accent
-        } else if gfx.hogwarts() {
-            fade(palette.accent, 0.45)
+        if gfx.hogwarts() {
+            // the news run along the bottom of the Map, under a dashed rule
+            gfx.dashed_rule(16.0, 454.5, 768.0, fade(palette.accent, 0.55));
         } else {
-            fade(palette.accent, 0.1)
-        };
-        gfx.vertical_gradient(0.0, 454.0, 800.0, 26.0, fade(palette.bg, 0.0), palette.bg);
-        gfx.rect(0.0, 454.0, 800.0, 1.0, line);
+            let line = if gfx.cyber() {
+                palette.accent
+            } else {
+                fade(palette.accent, 0.1)
+            };
+            gfx.vertical_gradient(0.0, 454.0, 800.0, 26.0, fade(palette.bg, 0.0), palette.bg);
+            gfx.rect(0.0, 454.0, 800.0, 1.0, line);
+        }
         let Some(snapshot) = &view.snapshot else {
             return;
         };
@@ -83,12 +86,19 @@ impl Ticker {
                 format!("{} libres", text::size(disk.free)),
             ));
         }
-        let label_style = Type::new(Face::Strong, 11.0).spaced(1.6);
-        // hogwarts writes the news in an italic hand, a little larger
-        let value_style = if gfx.hogwarts() {
-            Type::new(Face::Italic, 14.0)
+        // hogwarts prints the labels in red and the news in an italic hand
+        let (label_style, value_style, label_colour) = if gfx.hogwarts() {
+            (
+                Type::new(Face::Body, 12.0).spaced(1.6),
+                Type::new(Face::Italic, 14.0),
+                palette.accent2,
+            )
         } else {
-            Type::new(Face::Body, 12.5).spaced(0.4)
+            (
+                Type::new(Face::Strong, 11.0).spaced(1.6),
+                Type::new(Face::Body, 12.5).spaced(0.4),
+                palette.accent,
+            )
         };
         let gap = 46.0;
         let widths: Vec<f32> = items
@@ -114,7 +124,7 @@ impl Ticker {
                         467.5,
                         label,
                         label_style,
-                        palette.accent,
+                        label_colour,
                         Anchor::MIDDLE_LEFT,
                     );
                     gfx.text(
@@ -125,12 +135,21 @@ impl Ticker {
                         palette.muted,
                         Anchor::MIDDLE_LEFT,
                     );
-                    gfx.disc(
-                        x + width - gap / 2.0,
-                        467.5,
-                        2.0,
-                        fade(palette.accent2, 0.7),
-                    );
+                    if gfx.hogwarts() {
+                        gfx.fleuron(
+                            x + width - gap / 2.0,
+                            467.5,
+                            10.0,
+                            fade(palette.accent, 0.7),
+                        );
+                    } else {
+                        gfx.disc(
+                            x + width - gap / 2.0,
+                            467.5,
+                            2.0,
+                            fade(palette.accent2, 0.7),
+                        );
+                    }
                 }
                 x += width;
             }

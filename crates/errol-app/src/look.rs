@@ -1,7 +1,7 @@
-//! The three looks, with the colours of the home page's theme kit: friday
-//! (cyan and amber, a neural HUD), cyberpunk (Netwatch red, yellow and cyan,
-//! braindance editor) and hogwarts (old gold on ink, parchment, Gryffindor
-//! scarlet, the candles of the Great Hall).
+//! The three looks, with the colours of Pensieve's: friday (cyan and amber,
+//! a neural HUD), cyberpunk (Netwatch red, yellow and cyan, braindance
+//! editor) and hogwarts (the Marauder's Map: brown and red ink on warm
+//! parchment).
 
 use femtovg::Color;
 
@@ -50,13 +50,13 @@ impl Look {
                 ok: rgb(0x39ff88),
             },
             Self::Hogwarts => Palette {
-                bg: rgb(0x0b0a12),
-                accent: rgb(0xd4a849),
-                accent2: rgb(0xf3e3b3),
-                text: rgb(0xecdfc0),
-                muted: rgb(0xa8977a),
-                hot: rgb(0xb3242b),
-                ok: rgb(0x6fbf7f),
+                bg: rgb(0xf6dda6),
+                accent: rgb(0x3f210b),
+                accent2: rgb(0x9c1f12),
+                text: rgb(0x2a1608),
+                muted: rgb(0x74471f),
+                hot: rgb(0x9c1f12),
+                ok: rgb(0x2d6a36),
             },
         }
     }
@@ -72,7 +72,7 @@ pub struct Palette {
     pub accent2: Color,
     pub text: Color,
     pub muted: Color,
-    /// Alerts in friday, the big yellow in cyberpunk, Gryffindor scarlet in hogwarts.
+    /// Alerts in friday, the big yellow in cyberpunk, red ink in hogwarts.
     pub hot: Color,
     pub ok: Color,
 }

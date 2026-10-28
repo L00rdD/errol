@@ -8,6 +8,7 @@ mod header;
 mod idle;
 mod text;
 mod ticker;
+mod turner;
 
 use errol_domain::strategies::Scene;
 use errol_domain::usecases::View;
@@ -112,10 +113,14 @@ impl Stage {
         self.ticker.draw(gfx, view, dt);
         flash(gfx, age);
         if gfx.hogwarts() {
-            // no screen in that world: no scanlines, the dark of a candlelit hall
-            vignette(gfx);
+            // no screen in that world: no scanlines, the parchment's burnt edges
+            gfx.burnt_edges();
         } else {
             scanlines(gfx);
+        }
+        // the carousel turned: footsteps walk from the clock to the new card
+        if let Some((from, to)) = self.idle.take_walk() {
+            self.background.walk(from, to);
         }
     }
 
@@ -227,14 +232,21 @@ fn wipe_edge(gfx: &mut Gfx, age: f32) {
     }
 }
 
-/// The light (friday, hogwarts: candlelight) or the coloured bands (cyberpunk)
-/// of a change of scene.
+/// The light (friday), the coloured bands (cyberpunk) or the paper catching
+/// the light (hogwarts) of a change of scene.
 fn flash(gfx: &mut Gfx, age: f32) {
     let left = 1.0 - progress(age, 0.6);
     if left <= 0.0 {
         return;
     }
-    if gfx.cyber() {
+    if gfx.hogwarts() {
+        gfx.halo(
+            WIDTH / 2.0,
+            HEIGHT / 2.0,
+            460.0,
+            fade(femtovg::Color::rgb(0xff, 0xf4, 0xd8), 0.45 * left),
+        );
+    } else if gfx.cyber() {
         let (red, cyan, yellow) = (gfx.palette.accent, gfx.palette.accent2, gfx.palette.hot);
         for (y, h, colour) in [(0.20, 0.03, cyan), (0.61, 0.04, red), (0.80, 0.02, yellow)] {
             gfx.rect(0.0, HEIGHT * y, WIDTH, HEIGHT * h, fade(colour, 0.5 * left));
@@ -247,21 +259,6 @@ fn flash(gfx: &mut Gfx, age: f32) {
             fade(gfx.palette.accent, 0.35 * left),
         );
     }
-}
-
-/// The corners of the hall fall into darkness.
-fn vignette(gfx: &mut Gfx) {
-    let mut path = Path::new();
-    path.rect(0.0, 0.0, WIDTH, HEIGHT);
-    let dark = femtovg::Paint::radial_gradient(
-        WIDTH / 2.0,
-        HEIGHT / 2.0,
-        220.0,
-        520.0,
-        femtovg::Color::rgbaf(0.0, 0.0, 0.0, 0.0),
-        femtovg::Color::rgbaf(0.02, 0.01, 0.03, 0.55),
-    );
-    gfx.canvas.fill_path(&path, &dark);
 }
 
 /// Fine horizontal lines over everything, like an old monitor.
