@@ -39,8 +39,8 @@ It draws straight on the display with the GPU: no X, no Wayland, no browser.
 
 The look can change while Errol runs. When the feed names a look in its
 `settings`, Errol switches to it at once; this is the remote control, set
-from the home page or from the projector's home screen (Pensieve), which
-follows the same setting. Without one, Errol keeps its own (`--look` or
+from the home page. The projector's home screen (Pensieve) keeps its own look
+and does not touch this setting. Without one, Errol keeps its own (`--look` or
 `ERROL_LOOK`). The looks' colours come from the house's `looks.json`, the
 reference the hub serves at `/theme/looks.json`; `assets/looks.json` is a
 copy of it, built into the binary.
