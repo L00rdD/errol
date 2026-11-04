@@ -70,23 +70,7 @@ impl Stage {
     }
 
     pub fn draw(&mut self, gfx: &mut Gfx, view: &View, textures: &mut Textures, dt: f32) {
-        let key = match &view.scene {
-            Scene::Idle => "idle".to_owned(),
-            Scene::Event { event, .. } => format!("event:{}", event.id.as_str()),
-            Scene::Cinema(playing) => format!("cinema:{}", playing.id),
-        };
-        if key != self.key {
-            self.key = key;
-            // a scene cut short while it was still coming leaves from where it was
-            self.leaving = self.shown.take().map(|scene| (scene, self.since));
-            self.shown = Some(view.scene.clone());
-            self.since = gfx.t;
-            self.background.burst(if matches!(view.scene, Scene::Idle) {
-                0.35
-            } else {
-                1.2
-            });
-        }
+        self.follow(gfx, view);
         let age = gfx.t - self.since;
         if age >= LEAVE {
             self.leaving = None;
@@ -94,7 +78,31 @@ impl Stage {
         let bg = gfx.palette.bg;
         gfx.rect(0.0, 0.0, WIDTH, HEIGHT, bg);
         self.background.draw(gfx, dt);
+        self.draw_scenes(gfx, view, textures, age);
+        self.draw_overlays(gfx, view, dt, age);
+        // the carousel turned: footsteps walk from the clock to the new card
+        if let Some((from, to)) = self.idle.take_walk() {
+            self.background.walk(from, to);
+        }
+    }
 
+    /// Notices a change of scene: the one shown starts to leave, the new one
+    /// comes, and the background bursts.
+    fn follow(&mut self, gfx: &Gfx, view: &View) {
+        let key = scene_key(&view.scene);
+        if key == self.key {
+            return;
+        }
+        self.key = key;
+        // a scene cut short while it was still coming leaves from where it was
+        self.leaving = self.shown.take().map(|scene| (scene, self.since));
+        self.shown = Some(view.scene.clone());
+        self.since = gfx.t;
+        self.background.burst(burst_strength(&view.scene));
+    }
+
+    /// The scene that leaves, if any, then the scene that comes.
+    fn draw_scenes(&mut self, gfx: &mut Gfx, view: &View, textures: &mut Textures, age: f32) {
         if let Some((scene, since)) = self.leaving.take() {
             gfx.canvas.save();
             leave(gfx, age);
@@ -107,10 +115,14 @@ impl Stage {
         self.scene(gfx, view, &view.scene, age, textures);
         gfx.canvas.restore();
         gfx.alpha = 1.0;
+    }
+
+    /// What lies over the scenes: the wipe's edge, the header, the ticker, the
+    /// flash, and the scanlines or the parchment's burnt edges.
+    fn draw_overlays(&mut self, gfx: &mut Gfx, view: &View, dt: f32, age: f32) {
         if gfx.cyber() {
             wipe_edge(gfx, age);
         }
-
         header::draw(gfx, view);
         self.ticker.draw(gfx, view, dt);
         flash(gfx, age);
@@ -119,10 +131,6 @@ impl Stage {
             gfx.burnt_edges();
         } else {
             scanlines(gfx);
-        }
-        // the carousel turned: footsteps walk from the clock to the new card
-        if let Some((from, to)) = self.idle.take_walk() {
-            self.background.walk(from, to);
         }
     }
 
@@ -146,6 +154,25 @@ impl Stage {
             }
             Scene::Cinema(playing) => cinema::draw(gfx, view, playing, age, textures),
         }
+    }
+}
+
+/// Identifies a scene: "idle", "event:<id>", "cinema:<id>".
+fn scene_key(scene: &Scene) -> String {
+    match scene {
+        Scene::Idle => "idle".to_owned(),
+        Scene::Event { event, .. } => format!("event:{}", event.id.as_str()),
+        Scene::Cinema(playing) => format!("cinema:{}", playing.id),
+    }
+}
+
+/// How hard the background bursts when a scene comes: softly for the idle
+/// recap, strongly for news.
+fn burst_strength(scene: &Scene) -> f32 {
+    if matches!(scene, Scene::Idle) {
+        0.35
+    } else {
+        1.2
     }
 }
 
@@ -278,4 +305,36 @@ fn scanlines(gfx: &mut Gfx) {
         0.2
     };
     gfx.stroke(&path, femtovg::Color::rgbaf(0.0, 0.0, 0.0, strength), 1.0);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use errol_domain::entities::{Event, EventId, EventKind, Timestamp};
+
+    fn event() -> Scene {
+        Scene::Event {
+            event: Event {
+                id: EventId::new("7-1"),
+                at: Timestamp::from_secs(0),
+                kind: EventKind::Play {
+                    title: "Dune".into(),
+                },
+            },
+            started: Timestamp::from_secs(0),
+            ends: Timestamp::from_secs(60),
+        }
+    }
+
+    #[test]
+    fn a_scene_is_known_by_its_kind_and_id() {
+        assert_eq!(scene_key(&Scene::Idle), "idle");
+        assert_eq!(scene_key(&event()), "event:7-1");
+    }
+
+    #[test]
+    fn news_bursts_harder_than_the_recap() {
+        assert!((burst_strength(&Scene::Idle) - 0.35).abs() < f32::EPSILON);
+        assert!((burst_strength(&event()) - 1.2).abs() < f32::EPSILON);
+    }
 }
