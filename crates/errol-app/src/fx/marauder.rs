@@ -119,59 +119,76 @@ impl Marauder {
         }
         // the people of the castle
         for index in 0..self.people.len() {
-            let (tx, ty) = (self.rand() * W, self.rand() * H);
-            let person = &mut self.people[index];
-            let (dx, dy) = (person.tx - person.x, person.ty - person.y);
-            let dist = dx.hypot(dy);
-            if dist < 10.0 {
-                (person.tx, person.ty) = (tx, ty);
-            }
-            let v = PACE * dt;
-            if dist > 0.0 {
-                person.x += dx / dist * v;
-                person.y += dy / dist * v;
-            }
-            person.since += v;
-            if person.since > STRIDE {
-                person.since = 0.0;
-                let left = person.trail.len().is_multiple_of(2);
-                person
-                    .trail
-                    .push_back((person.x, person.y, dy.atan2(dx), left));
-                if person.trail.len() > TRAIL {
-                    person.trail.pop_front();
-                }
-            }
+            let next = (self.rand() * W, self.rand() * H);
+            self.people[index].step(PACE * dt, next);
         }
         for person in &self.people {
-            let count = person.trail.len().max(1) as f32;
-            for (k, &(x, y, heading, left)) in person.trail.iter().enumerate() {
-                let alpha = 0.08 + 0.5 * k as f32 / count;
-                footprint(gfx, x, y, heading, left, alpha, 1.0);
-            }
-            gfx.ribbon(person.x, person.y + 7.0, person.name, 0.62);
+            person.draw(gfx);
         }
-        // the viewer's own footsteps
-        if let Some((corners, age)) = &mut self.walk {
-            *age += dt;
-            if *age > WALK_LIFE {
-                self.walk = None;
-            } else {
-                let (corners, age) = (corners.clone(), *age);
-                footsteps(gfx, &corners, age);
-            }
+        self.draw_walk(gfx, dt);
+    }
+
+    /// The viewer's own footsteps, until they are gone.
+    fn draw_walk(&mut self, gfx: &mut Gfx, dt: f32) {
+        let Some((corners, age)) = &mut self.walk else {
+            return;
+        };
+        *age += dt;
+        if *age > WALK_LIFE {
+            self.walk = None;
+            return;
+        }
+        for (x, y, heading, left, alpha) in footsteps(corners, *age) {
+            footprint(gfx, x, y, heading, left, alpha, 0.85);
         }
     }
 }
 
-/// The footsteps along `corners`, written one after the other over
-/// `WALK_TIME`, fading after `WALK_FADE`.
-fn footsteps(gfx: &mut Gfx, corners: &[(f32, f32)], age: f32) {
+impl Walker {
+    /// Walks `v` pixels towards its target, choosing `next` once there, and
+    /// leaves a footprint every stride.
+    fn step(&mut self, v: f32, next: (f32, f32)) {
+        let (dx, dy) = (self.tx - self.x, self.ty - self.y);
+        let dist = dx.hypot(dy);
+        if dist < 10.0 {
+            (self.tx, self.ty) = next;
+        }
+        if dist > 0.0 {
+            self.x += dx / dist * v;
+            self.y += dy / dist * v;
+        }
+        self.since += v;
+        if self.since > STRIDE {
+            self.since = 0.0;
+            let left = self.trail.len().is_multiple_of(2);
+            self.trail.push_back((self.x, self.y, dy.atan2(dx), left));
+            if self.trail.len() > TRAIL {
+                self.trail.pop_front();
+            }
+        }
+    }
+
+    /// Its trail, older prints fainter, and its name on a ribbon.
+    fn draw(&self, gfx: &mut Gfx) {
+        let count = self.trail.len().max(1) as f32;
+        for (k, &(x, y, heading, left)) in self.trail.iter().enumerate() {
+            let alpha = 0.08 + 0.5 * k as f32 / count;
+            footprint(gfx, x, y, heading, left, alpha, 1.0);
+        }
+        gfx.ribbon(self.x, self.y + 7.0, self.name, 0.62);
+    }
+}
+
+/// The footsteps along `corners` that show at `age`: written one after the
+/// other over `WALK_TIME`, fading after `WALK_FADE`. Each is x, y, heading,
+/// left foot, opacity.
+fn footsteps(corners: &[(f32, f32)], age: f32) -> Vec<(f32, f32, f32, bool, f32)> {
     let total: f32 = corners
         .windows(2)
         .map(|pair| (pair[1].0 - pair[0].0).hypot(pair[1].1 - pair[0].1))
         .sum();
     let steps = (total / STRIDE).max(2.0);
+    let mut prints = Vec::new();
     let mut n = 0;
     for pair in corners.windows(2) {
         let ((x0, y0), (x1, y1)) = (pair[0], pair[1]);
@@ -181,24 +198,23 @@ fn footsteps(gfx: &mut Gfx, corners: &[(f32, f32)], age: f32) {
         while d < len {
             let born = age - n as f32 / steps * WALK_TIME;
             if born < 0.0 {
-                return;
+                return prints;
             }
             let alpha = 0.9 - (born - WALK_FADE).max(0.0) * 0.6;
             if alpha > 0.0 {
-                footprint(
-                    gfx,
+                prints.push((
                     x0 + (x1 - x0) * d / len,
                     y0 + (y1 - y0) * d / len,
                     heading,
                     n % 2 == 1,
                     alpha,
-                    0.85,
-                );
+                ));
             }
             d += STRIDE;
             n += 1;
         }
     }
+    prints
 }
 
 /// One footprint: the sole and the toe, heading `heading`, the left foot a
@@ -214,4 +230,70 @@ fn footprint(gfx: &mut Gfx, x: f32, y: f32, heading: f32, left: bool, alpha: f32
     foot.ellipse(-4.3, 0.0, 1.5, 1.4);
     gfx.fill(&foot, fade(ink::ink(), alpha));
     gfx.canvas.restore();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const CORRIDOR: [(f32, f32); 3] = [(0.0, 0.0), (90.0, 0.0), (90.0, 45.0)];
+
+    #[test]
+    fn footsteps_write_themselves_one_after_the_other() {
+        assert_eq!(footsteps(&CORRIDOR, 0.0).len(), 1);
+        let half = footsteps(&CORRIDOR, WALK_TIME / 2.0);
+        let all = footsteps(&CORRIDOR, WALK_TIME);
+        assert!(half.len() > 1 && half.len() < all.len());
+        assert_eq!(all.len(), 15);
+    }
+
+    #[test]
+    fn footsteps_alternate_feet_and_turn_the_corner() {
+        let all = footsteps(&CORRIDOR, WALK_TIME);
+        assert!(!all[0].3 && all[1].3);
+        assert!(all[0].2.abs() < f32::EPSILON);
+        let last = all.last().expect("a print");
+        assert!((last.2 - std::f32::consts::FRAC_PI_2).abs() < 1e-6);
+        assert!((last.0 - 90.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn footsteps_fade_then_vanish() {
+        assert!(footsteps(&CORRIDOR, WALK_FADE + 0.5)[0].4 < 0.9);
+        assert_eq!(footsteps(&CORRIDOR, 4.4), Vec::new());
+    }
+
+    #[test]
+    fn a_walker_heads_for_its_target_and_leaves_prints() {
+        let mut walker = Walker {
+            name: "Peeves",
+            x: 0.0,
+            y: 0.0,
+            tx: 1000.0,
+            ty: 0.0,
+            since: 0.0,
+            trail: VecDeque::new(),
+        };
+        for _ in 0..40 {
+            walker.step(5.0, (0.0, 0.0));
+        }
+        assert!((walker.x - 200.0).abs() < 1e-3);
+        assert_eq!(walker.trail.len(), TRAIL);
+        walker.tx = 205.0;
+        walker.step(5.0, (7.0, 8.0));
+        assert_eq!((walker.tx, walker.ty), (7.0, 8.0));
+    }
+
+    #[test]
+    fn a_scene_or_a_move_starts_a_walk() {
+        let mut marauder = Marauder::new();
+        marauder.burst(1.0);
+        assert_eq!(marauder.walk.as_ref().map(|walk| walk.0.len()), Some(2));
+        marauder.burst(0.5);
+        assert_eq!(marauder.walk.as_ref().map(|walk| walk.0.len()), Some(3));
+        marauder.walk((0.0, 0.0, 100.0, 50.0), (300.0, 0.0, 100.0, 50.0));
+        assert_eq!(marauder.walk.as_ref().map(|walk| walk.0.len()), Some(2));
+        marauder.walk((0.0, 0.0, 100.0, 50.0), (300.0, 200.0, 100.0, 50.0));
+        assert_eq!(marauder.walk.as_ref().map(|walk| walk.0.len()), Some(4));
+    }
 }

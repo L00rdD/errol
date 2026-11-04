@@ -132,18 +132,7 @@ impl Neural {
     pub fn draw(&mut self, gfx: &mut Gfx, dt: f32) {
         let heat = self.heat;
         self.heat *= (-dt * 0.45).exp();
-        let pace = 1.0 + heat * 3.0;
-        for node in &mut self.nodes {
-            node.x += node.vx * dt * pace;
-            node.y += node.vy * dt * pace;
-            if !(-10.0..=W + 10.0).contains(&node.x) {
-                node.vx = -node.vx;
-            }
-            if !(-10.0..=H + 10.0).contains(&node.y) {
-                node.vy = -node.vy;
-            }
-            node.lit *= (-dt * 1.8).exp();
-        }
+        self.drift(dt, 1.0 + heat * 3.0);
         self.relink_in -= dt;
         if self.relink_in <= 0.0 {
             self.relink_in = 0.4;
@@ -155,25 +144,53 @@ impl Neural {
             self.fire(from);
         }
         let accent = gfx.palette.accent;
+        self.draw_links(gfx, accent, heat);
+        let arrived = self.draw_signals(gfx, accent, dt, 1.0 + heat * 2.0);
+        for node in arrived {
+            self.nodes[node].lit = 1.0;
+            if self.rand() < 0.55 + heat * 0.4 {
+                self.fire(node);
+            }
+        }
+        self.draw_nodes(gfx, accent);
+    }
 
-        // links: four strokes, one per brightness level
+    /// Nodes drift, `pace` times faster when hot, bounce off the edges, and dim.
+    fn drift(&mut self, dt: f32, pace: f32) {
+        for node in &mut self.nodes {
+            node.x += node.vx * dt * pace;
+            node.y += node.vy * dt * pace;
+            if !(-10.0..=W + 10.0).contains(&node.x) {
+                node.vx = -node.vx;
+            }
+            if !(-10.0..=H + 10.0).contains(&node.y) {
+                node.vy = -node.vy;
+            }
+            node.lit *= (-dt * 1.8).exp();
+        }
+    }
+
+    /// Links: four strokes, one per brightness level.
+    fn draw_links(&self, gfx: &mut Gfx, accent: Color, heat: f32) {
         let mut levels: [Path; 4] = [Path::new(), Path::new(), Path::new(), Path::new()];
         for &(i, j, d) in &self.links {
             let lit = self.nodes[i].lit.max(self.nodes[j].lit);
-            let alpha = (1.0 - d / REACH) * (0.42 + 0.6 * lit + heat * 0.25);
-            let path = &mut levels[((alpha * 4.0) as usize).min(3)];
+            let path = &mut levels[link_level(d, lit, heat)];
             path.move_to(self.nodes[i].x, self.nodes[i].y);
             path.line_to(self.nodes[j].x, self.nodes[j].y);
         }
         for (level, path) in levels.iter().enumerate() {
             gfx.stroke(path, fade(accent, (level as f32 + 0.6) / 4.0 * 0.55), 1.0);
         }
+    }
 
-        // signals
+    /// Moves the signals along their links, `pace` times faster when hot,
+    /// and draws them; returns the nodes they reached.
+    fn draw_signals(&mut self, gfx: &mut Gfx, accent: Color, dt: f32, pace: f32) -> Vec<usize> {
         let mut arrived = Vec::new();
         let mut dots = Path::new();
         for signal in &mut self.signals {
-            signal.k += signal.speed * dt * (1.0 + heat * 2.0);
+            signal.k += signal.speed * dt * pace;
             let (a, b) = (&self.nodes[signal.from], &self.nodes[signal.to]);
             let (x, y) = (
                 a.x + (b.x - a.x) * signal.k.min(1.0),
@@ -187,14 +204,11 @@ impl Neural {
         }
         gfx.fill(&dots, Color::rgbaf(1.0, 1.0, 1.0, 0.92));
         self.signals.retain(|signal| signal.k < 1.0);
-        for node in arrived {
-            self.nodes[node].lit = 1.0;
-            if self.rand() < 0.55 + heat * 0.4 {
-                self.fire(node);
-            }
-        }
+        arrived
+    }
 
-        // nodes
+    /// Nodes, the lit ones with a halo.
+    fn draw_nodes(&self, gfx: &mut Gfx, accent: Color) {
         let mut plain = Path::new();
         for node in &self.nodes {
             plain.circle(node.x, node.y, node.r);
@@ -214,5 +228,44 @@ impl Neural {
                 fade(accent, node.lit),
             );
         }
+    }
+}
+
+/// Which of the four strokes a link `d` long goes in: brighter when short,
+/// lit or hot.
+fn link_level(d: f32, lit: f32, heat: f32) -> usize {
+    let alpha = (1.0 - d / REACH) * (0.42 + 0.6 * lit + heat * 0.25);
+    ((alpha * 4.0) as usize).min(3)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn short_lit_links_are_brightest() {
+        assert_eq!(link_level(REACH, 0.0, 0.0), 0);
+        assert_eq!(link_level(0.0, 0.0, 0.0), 1);
+        assert_eq!(link_level(0.0, 1.0, 1.5), 3);
+    }
+
+    #[test]
+    fn nodes_bounce_off_the_edges() {
+        let mut neural = Neural::new();
+        neural.nodes[0].x = W + 20.0;
+        neural.nodes[0].y = -20.0;
+        let (vx, vy) = (neural.nodes[0].vx, neural.nodes[0].vy);
+        neural.nodes[0].lit = 1.0;
+        neural.drift(1.0, 0.0);
+        assert_eq!((neural.nodes[0].vx, neural.nodes[0].vy), (-vx, -vy));
+        assert!(neural.nodes[0].lit < 0.2);
+    }
+
+    #[test]
+    fn a_burst_fires_signals_from_the_centre() {
+        let mut neural = Neural::new();
+        neural.burst(1.0);
+        assert!(!neural.signals.is_empty());
+        assert!(neural.nodes.iter().filter(|node| node.lit > 0.99).count() >= 6);
     }
 }

@@ -76,9 +76,14 @@ impl Grid {
     pub fn draw(&mut self, gfx: &mut Gfx, dt: f32) {
         let heat = self.heat;
         self.heat *= (-dt * 0.45).exp();
-        let (red, cyan, yellow) = (gfx.palette.accent, gfx.palette.accent2, gfx.palette.hot);
+        self.floor(gfx, dt, heat);
+        self.columns(gfx, dt, heat);
+        self.glitch(gfx, dt, heat);
+    }
 
-        // the horizon glows red
+    /// The horizon glows red; floor lines come closer, faster when hot.
+    fn floor(&mut self, gfx: &mut Gfx, dt: f32, heat: f32) {
+        let red = gfx.palette.accent;
         gfx.vertical_gradient(
             0.0,
             HORIZON - 140.0,
@@ -87,7 +92,6 @@ impl Grid {
             fade(red, 0.0),
             fade(red, 0.18 + heat * 0.2),
         );
-        // floor lines come closer, faster when hot
         self.scroll = (self.scroll + dt * (36.0 + heat * 120.0)) % 40.0;
         let mut floor = Path::new();
         for k in 0..14 {
@@ -101,53 +105,40 @@ impl Grid {
             floor.line_to(W / 2.0 + k as f32 * 110.0, H);
         }
         gfx.stroke(&floor, fade(red, 0.3 + heat * 0.3), 1.0);
+    }
 
-        // data columns
+    /// Columns of data falling; a column that wakes starts falling, one that
+    /// fell below the horizon starts again from the top.
+    fn columns(&mut self, gfx: &mut Gfx, dt: f32, heat: f32) {
         let tick = (gfx.t * 12.0) as u64;
         for index in 0..self.columns.len() {
             let wake = self.rand() < (0.06 + heat * 1.5) * dt;
             let column = &mut self.columns[index];
-            if !column.on && wake {
-                column.on = true;
-            }
+            column.on |= wake;
             if !column.on {
                 continue;
             }
             column.y += column.speed * dt * (1.0 + heat * 2.0);
             let (column_x, tip) = (column.x, column.y);
-            for k in 0..9 {
-                let y = tip - k as f32 * 14.0;
-                if !(0.0..=HORIZON).contains(&y) {
-                    continue;
-                }
-                let glyph =
-                    GLYPHS[(hash(tick + k as u64, index as u64) % GLYPHS.len() as u64) as usize];
-                let colour = if k == 0 {
-                    fade(yellow, 0.9)
-                } else {
-                    fade(cyan, 0.5 - k as f32 * 0.05)
-                };
-                gfx.text(
-                    column_x,
-                    y,
-                    glyph,
-                    Type::new(Face::Body, 12.0),
-                    colour,
-                    Anchor::TOP_LEFT,
-                );
-            }
+            trail(gfx, index, tick, (column_x, tip));
             if tip - 130.0 > HORIZON {
-                let (y, speed, on) = (
-                    self.rand() * -200.0,
-                    36.0 + self.rand() * 70.0,
-                    self.rand() < 0.5,
-                );
-                let column = &mut self.columns[index];
-                (column.y, column.speed, column.on) = (y, speed, on);
+                self.respawn(index);
             }
         }
+    }
 
-        // glitch blocks
+    fn respawn(&mut self, index: usize) {
+        let (y, speed, on) = (
+            self.rand() * -200.0,
+            36.0 + self.rand() * 70.0,
+            self.rand() < 0.5,
+        );
+        let column = &mut self.columns[index];
+        (column.y, column.speed, column.on) = (y, speed, on);
+    }
+
+    /// Glitch blocks: one now and then, more when hot, gone in a blink.
+    fn glitch(&mut self, gfx: &mut Gfx, dt: f32, heat: f32) {
         if self.rand() < (0.9 + heat * 12.0) * dt {
             let block = Block {
                 x: self.rand() * W,
@@ -159,15 +150,69 @@ impl Grid {
             };
             self.blocks.push(block);
         }
+        let palette = [gfx.palette.accent, gfx.palette.accent2, gfx.palette.hot];
         for block in &mut self.blocks {
-            let colour = match block.colour {
-                0 => red,
-                1 => cyan,
-                _ => yellow,
-            };
+            let colour = palette[usize::from(block.colour.min(2))];
             gfx.rect(block.x, block.y, block.w, block.h, fade(colour, 0.35));
             block.life -= dt;
         }
         self.blocks.retain(|block| block.life > 0.0);
+    }
+}
+
+/// A column's glyphs, its tip at (x, tip): yellow at the tip, fading cyan
+/// above, only above the horizon.
+fn trail(gfx: &mut Gfx, index: usize, tick: u64, (x, tip): (f32, f32)) {
+    let (cyan, yellow) = (gfx.palette.accent2, gfx.palette.hot);
+    for k in 0..9 {
+        let y = tip - k as f32 * 14.0;
+        if !(0.0..=HORIZON).contains(&y) {
+            continue;
+        }
+        let colour = if k == 0 {
+            fade(yellow, 0.9)
+        } else {
+            fade(cyan, 0.5 - k as f32 * 0.05)
+        };
+        gfx.text(
+            x,
+            y,
+            glyph(tick, k, index),
+            Type::new(Face::Body, 12.0),
+            colour,
+            Anchor::TOP_LEFT,
+        );
+    }
+}
+
+/// The `k`-th glyph of column `index`, changing twelve times a second.
+fn glyph(tick: u64, k: u64, index: usize) -> &'static str {
+    GLYPHS[(hash(tick + k, index as u64) % GLYPHS.len() as u64) as usize]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_glyph_stays_put_within_a_tick() {
+        assert_eq!(glyph(5, 1, 3), glyph(5, 1, 3));
+        assert!(GLYPHS.contains(&glyph(9, 8, 33)));
+    }
+
+    #[test]
+    fn a_column_falls_back_to_the_top() {
+        let mut grid = Grid::new();
+        grid.respawn(0);
+        assert!(grid.columns[0].y <= 0.0 && grid.columns[0].y >= -200.0);
+        assert!((36.0..=106.0).contains(&grid.columns[0].speed));
+    }
+
+    #[test]
+    fn a_burst_wakes_columns_and_heats() {
+        let mut grid = Grid::new();
+        grid.burst(2.0);
+        assert!((grid.heat - 1.5).abs() < f32::EPSILON);
+        assert!(grid.columns.iter().filter(|column| column.on).count() > 12);
     }
 }
