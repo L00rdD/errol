@@ -105,6 +105,34 @@ pub struct Gfx<'a> {
     pub alpha: f32,
 }
 
+/// One of the fonts of `Fonts`, in the order of its fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Family {
+    Michroma,
+    Medium,
+    Semibold,
+    Bold,
+    Fell,
+    FellItalic,
+    Mono,
+    MonoBold,
+}
+
+/// The font a face is written in, in a look. Michroma has no ◆, no arrows:
+/// Rajdhani (semibold) catches what a font lacks.
+fn family(face: Face, look: Look) -> Family {
+    match (face, look) {
+        (Face::Mono, _) => Family::Mono,
+        (Face::MonoBold, _) => Family::MonoBold,
+        (Face::Display, Look::Friday) => Family::Michroma,
+        (Face::Display | Face::Strong | Face::Bold | Face::Body, Look::Hogwarts) => Family::Fell,
+        (Face::Italic, Look::Hogwarts) => Family::FellItalic,
+        (Face::Display | Face::Bold, _) => Family::Bold,
+        (Face::Strong, _) => Family::Semibold,
+        (Face::Body | Face::Italic, _) => Family::Medium,
+    }
+}
+
 impl Gfx<'_> {
     pub fn cyber(&self) -> bool {
         self.look == Look::Cyberpunk
@@ -125,20 +153,18 @@ impl Gfx<'_> {
     }
 
     fn font(&self, face: Face) -> [FontId; 2] {
-        // Michroma has no ◆, no arrows: Rajdhani catches what it lacks
-        let primary = match (face, self.look) {
-            (Face::Mono, _) => self.fonts.mono,
-            (Face::MonoBold, _) => self.fonts.mono_bold,
-            (Face::Display, Look::Friday) => self.fonts.michroma,
-            (Face::Display | Face::Strong | Face::Bold | Face::Body, Look::Hogwarts) => {
-                self.fonts.fell
-            }
-            (Face::Italic, Look::Hogwarts) => self.fonts.fell_italic,
-            (Face::Display | Face::Bold, _) => self.fonts.bold,
-            (Face::Strong, _) => self.fonts.semibold,
-            (Face::Body | Face::Italic, _) => self.fonts.medium,
-        };
-        [primary, self.fonts.semibold]
+        let fonts = self.fonts;
+        let all = [
+            fonts.michroma,
+            fonts.medium,
+            fonts.semibold,
+            fonts.bold,
+            fonts.fell,
+            fonts.fell_italic,
+            fonts.mono,
+            fonts.mono_bold,
+        ];
+        [all[family(face, self.look) as usize], fonts.semibold]
     }
 
     fn text_paint(&self, style: Type, color: Color, anchor: Anchor) -> Paint {
@@ -470,5 +496,23 @@ impl Gfx<'_> {
             color,
             Anchor::TOP_LEFT,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn each_look_writes_in_its_own_hand() {
+        assert_eq!(family(Face::Display, Look::Friday), Family::Michroma);
+        assert_eq!(family(Face::Display, Look::Cyberpunk), Family::Bold);
+        assert_eq!(family(Face::Body, Look::Hogwarts), Family::Fell);
+        assert_eq!(family(Face::Italic, Look::Hogwarts), Family::FellItalic);
+        assert_eq!(family(Face::Italic, Look::Friday), Family::Medium);
+        assert_eq!(family(Face::Strong, Look::Cyberpunk), Family::Semibold);
+        assert_eq!(family(Face::Bold, Look::Friday), Family::Bold);
+        assert_eq!(family(Face::Mono, Look::Hogwarts), Family::Mono);
+        assert_eq!(family(Face::MonoBold, Look::Cyberpunk), Family::MonoBold);
     }
 }
