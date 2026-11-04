@@ -26,17 +26,35 @@ pub fn draw(gfx: &mut Gfx, cx: f32, cy: f32, scale: f32, hour: usize, progress: 
     gfx.canvas.scale(scale, scale);
     gfx.canvas.translate(-CENTRE.0, -CENTRE.1);
     let (x, y) = CENTRE;
-    // the chain
+    chain(gfx);
+    // its glow on the parchment
+    gfx.halo(x, y, 178.0, fade(rgb(0xffd27a), 0.5));
+    outer_ring(gfx, t);
+    hours(gfx, hour);
+    inner_rings(gfx, t);
+    hourglass_at(gfx, progress, t);
+    gfx.canvas.restore();
+}
+
+/// The chain it hangs from: links alternately seen flat and edge-on.
+fn chain(gfx: &mut Gfx) {
     let mut chain = Path::new();
     for k in 0..6 {
-        let half = if k % 2 == 1 { 3.0 } else { 6.0 };
-        chain.ellipse(200.0, 8.0 + k as f32 * 11.0, half, 7.0);
+        chain.ellipse(200.0, 8.0 + k as f32 * 11.0, link_half_width(k), 7.0);
     }
     gfx.canvas
         .stroke_path(&chain, &gold(0.0, 0.0, 400.0, 400.0).with_line_width(3.0));
-    // its glow on the parchment
-    gfx.halo(x, y, 178.0, fade(rgb(0xffd27a), 0.5));
-    // the outer ring, engraved, turning
+}
+
+/// Half the width of the `k`th link: every other one is seen edge-on.
+fn link_half_width(k: usize) -> f32 {
+    if k % 2 == 1 { 3.0 } else { 6.0 }
+}
+
+/// The outer ring, engraved, turning; a plain gold band when the Map's
+/// images could not be baked.
+fn outer_ring(gfx: &mut Gfx, t: f32) {
+    let (x, y) = CENTRE;
     if let Some(map) = gfx.map {
         gfx.canvas.save();
         gfx.canvas.translate(x, y);
@@ -49,16 +67,16 @@ pub fn draw(gfx: &mut Gfx, cx: f32, cy: f32, scale: f32, hour: usize, progress: 
         gfx.canvas
             .stroke_path(&band, &gold(0.0, 0.0, 400.0, 400.0).with_line_width(26.0));
     }
-    // the hours
+}
+
+/// The hours round the dial, the current one larger and in red ink.
+fn hours(gfx: &mut Gfx, hour: usize) {
+    let (x, y) = CENTRE;
     gfx.disc(x, y, 146.0, fade(rgb(0x46280a), 0.08));
     gfx.ring(x, y, 146.0, 1.0, rgb(0x6b4512), &[], 0.0, TAU);
     for (i, numeral) in ROMAN.iter().enumerate() {
         let a = i as f32 * TAU / 12.0;
-        let (colour, size) = if i == hour {
-            (ink::red(), 21.0)
-        } else {
-            (rgb(0x4a2c0c), 17.0)
-        };
+        let (colour, size) = numeral_style(i, hour);
         gfx.text(
             x + a.sin() * 130.0,
             y + 6.0 - a.cos() * 130.0,
@@ -68,7 +86,20 @@ pub fn draw(gfx: &mut Gfx, cx: f32, cy: f32, scale: f32, hour: usize, progress: 
             Anchor::MIDDLE_CENTER,
         );
     }
-    // the inner rings, turning on themselves
+}
+
+/// The colour and size of the `i`th numeral: the current hour stands out.
+fn numeral_style(i: usize, hour: usize) -> (Color, f32) {
+    if i == hour {
+        (ink::red(), 21.0)
+    } else {
+        (rgb(0x4a2c0c), 17.0)
+    }
+}
+
+/// The inner rings, turning on themselves.
+fn inner_rings(gfx: &mut Gfx, t: f32) {
+    let (x, y) = CENTRE;
     for (radius, period, width) in [(112.0, 7.0, 9.0), (96.0, -11.0, 6.0)] {
         gfx.canvas.save();
         gfx.canvas.translate(x, y);
@@ -81,8 +112,6 @@ pub fn draw(gfx: &mut Gfx, cx: f32, cy: f32, scale: f32, hour: usize, progress: 
         );
         gfx.canvas.restore();
     }
-    hourglass_at(gfx, progress, t);
-    gfx.canvas.restore();
 }
 
 /// The hourglass alone, its top left at (`x`, `y`), `scale` units to a pixel
@@ -159,4 +188,21 @@ fn hourglass_at(gfx: &mut Gfx, progress: f32, t: f32) {
 /// Keeps the sand's colour in one place for the cards that print it.
 pub fn sand() -> Color {
     rgb(0xd9a441)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_links_alternate() {
+        assert!((link_half_width(0) - 6.0).abs() < f32::EPSILON);
+        assert!((link_half_width(1) - 3.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn the_current_hour_is_larger_and_red() {
+        assert_eq!(numeral_style(3, 3), (ink::red(), 21.0));
+        assert_eq!(numeral_style(4, 3), (rgb(0x4a2c0c), 17.0));
+    }
 }
