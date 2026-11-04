@@ -111,16 +111,10 @@ impl Carousel {
         if list.is_empty() {
             return;
         }
-        if gfx.t - self.since >= CARD_TIME {
-            self.previous = list.get(self.turn % list.len()).copied();
-            self.turn += 1;
-            self.since = gfx.t;
-            self.walk_due = list.len() > 1;
-        }
-        let card = list[self.turn % list.len()];
+        let card = self.turn_to(gfx.t, &list);
         let age = gfx.t - self.since;
+        let k = ease_out(progress(age, SLIDE));
         if let Some(previous) = self.previous.filter(|_| age < SLIDE) {
-            let k = ease_out(progress(age, SLIDE));
             draw_card(
                 gfx,
                 snapshot,
@@ -132,7 +126,6 @@ impl Carousel {
                 textures,
             );
         }
-        let k = ease_out(progress(age, SLIDE));
         draw_card(
             gfx,
             snapshot,
@@ -143,23 +136,19 @@ impl Carousel {
             age,
             textures,
         );
-        // one dash per card, the current one lit; on the Map, in ink
-        let dim = if gfx.hogwarts() { 0.3 } else { 0.15 };
-        for index in 0..list.len() {
-            let dash_x = 776.0 - (list.len() - index) as f32 * 24.0;
-            let current = index == self.turn % list.len();
-            gfx.rect(
-                dash_x,
-                BOTTOM - 20.0,
-                18.0,
-                3.0,
-                if current {
-                    gfx.palette.accent
-                } else {
-                    fade(gfx.palette.accent, dim)
-                },
-            );
+        dashes(gfx, list.len(), self.turn % list.len());
+    }
+
+    /// Turns to the next card once the current one has stayed its time;
+    /// returns the card to show.
+    fn turn_to(&mut self, t: f32, list: &[Card]) -> Card {
+        if t - self.since >= CARD_TIME {
+            self.previous = list.get(self.turn % list.len()).copied();
+            self.turn += 1;
+            self.since = t;
+            self.walk_due = list.len() > 1;
         }
+        list[self.turn % list.len()]
     }
 
     /// The boxes footsteps should walk between, once, after the carousel
@@ -172,57 +161,83 @@ impl Carousel {
     }
 }
 
+/// One dash per card, the current one lit; on the Map, in ink.
+fn dashes(gfx: &mut Gfx, count: usize, current: usize) {
+    let dim = if gfx.hogwarts() { 0.3 } else { 0.15 };
+    for index in 0..count {
+        let dash_x = 776.0 - (count - index) as f32 * 24.0;
+        let colour = if index == current {
+            gfx.palette.accent
+        } else {
+            fade(gfx.palette.accent, dim)
+        };
+        gfx.rect(dash_x, BOTTOM - 20.0, 18.0, 3.0, colour);
+    }
+}
+
 /// The clock in its turning rings; the Time-Turner on the Map, the time in
 /// words under it, and the Map's oath.
 fn core(gfx: &mut Gfx, view: &View) {
-    let palette = gfx.palette;
     if gfx.hogwarts() {
-        let local = text::local(view.now);
-        let (hour, minute) = (
-            chrono::Timelike::hour(&local),
-            chrono::Timelike::minute(&local),
-        );
-        let gone = (minute * 60 + chrono::Timelike::second(&local)) as f32 / 3600.0;
-        let (x, y, scale) = TURNER;
-        turner::draw(gfx, x, y, scale, (hour % 12) as usize, gone);
-        gfx.text(
-            x,
-            y + 126.0,
-            &text::in_words(hour, minute),
-            Type::new(Face::Italic, 19.0),
-            palette.accent,
-            Anchor::MIDDLE_CENTER,
-        );
-        gfx.text(
-            x,
-            y + 146.0,
-            &text::clock(view.now),
-            Type::new(Face::Body, 11.0).spaced(2.0),
-            palette.accent2,
-            Anchor::MIDDLE_CENTER,
-        );
-        gfx.text(
-            x,
-            y + 164.0,
-            &text::date(view.now),
-            Type::new(Face::Italic, 13.0),
-            palette.muted,
-            Anchor::MIDDLE_CENTER,
-        );
-        let oath = Type::new(Face::Italic, 11.5);
-        for (index, line) in gfx.wrap(OATH, 250.0, oath, 2).iter().enumerate() {
-            gfx.text(
-                x,
-                y + 186.0 + index as f32 * 14.0,
-                line,
-                oath,
-                fade(palette.muted, 0.85),
-                Anchor::MIDDLE_CENTER,
-            );
-        }
+        core_map(gfx, view);
         return;
     }
     let (x, y) = (140.0, f32::midpoint(TOP, BOTTOM));
+    rings(gfx, x, y, view);
+    clock(gfx, x, y, view);
+}
+
+/// The Time-Turner, the time in words, the date and the Map's oath.
+fn core_map(gfx: &mut Gfx, view: &View) {
+    let palette = gfx.palette;
+    let local = text::local(view.now);
+    let (hour, minute) = (
+        chrono::Timelike::hour(&local),
+        chrono::Timelike::minute(&local),
+    );
+    let gone = (minute * 60 + chrono::Timelike::second(&local)) as f32 / 3600.0;
+    let (x, y, scale) = TURNER;
+    turner::draw(gfx, x, y, scale, (hour % 12) as usize, gone);
+    gfx.text(
+        x,
+        y + 126.0,
+        &text::in_words(hour, minute),
+        Type::new(Face::Italic, 19.0),
+        palette.accent,
+        Anchor::MIDDLE_CENTER,
+    );
+    gfx.text(
+        x,
+        y + 146.0,
+        &text::clock(view.now),
+        Type::new(Face::Body, 11.0).spaced(2.0),
+        palette.accent2,
+        Anchor::MIDDLE_CENTER,
+    );
+    gfx.text(
+        x,
+        y + 164.0,
+        &text::date(view.now),
+        Type::new(Face::Italic, 13.0),
+        palette.muted,
+        Anchor::MIDDLE_CENTER,
+    );
+    let oath = Type::new(Face::Italic, 11.5);
+    for (index, line) in gfx.wrap(OATH, 250.0, oath, 2).iter().enumerate() {
+        gfx.text(
+            x,
+            y + 186.0 + index as f32 * 14.0,
+            line,
+            oath,
+            fade(palette.muted, 0.85),
+            Anchor::MIDDLE_CENTER,
+        );
+    }
+}
+
+/// The turning rings around the clock, the inner one counting the seconds.
+fn rings(gfx: &mut Gfx, x: f32, y: f32, view: &View) {
+    let palette = gfx.palette;
     let t = gfx.t;
     let ring = if gfx.cyber() {
         palette.hot
@@ -259,9 +274,6 @@ fn core(gfx: &mut Gfx, view: &View) {
         t * TAU / 90.0,
         TAU,
     );
-    let local = text::local(view.now);
-    let seconds =
-        chrono::Timelike::second(&local) as f32 + (view.now.0.rem_euclid(1000)) as f32 / 1000.0;
     gfx.ring(
         x,
         y,
@@ -270,8 +282,19 @@ fn core(gfx: &mut Gfx, view: &View) {
         palette.accent2,
         &[],
         -TAU / 4.0,
-        TAU * seconds / 60.0,
+        TAU * seconds(view) / 60.0,
     );
+}
+
+/// Seconds into the minute, with their fraction.
+fn seconds(view: &View) -> f32 {
+    let local = text::local(view.now);
+    chrono::Timelike::second(&local) as f32 + (view.now.0.rem_euclid(1000)) as f32 / 1000.0
+}
+
+/// The time, split in cyberpunk, glowing in friday, and the date under it.
+fn clock(gfx: &mut Gfx, x: f32, y: f32, view: &View) {
+    let palette = gfx.palette;
     let clock = text::clock(view.now);
     if gfx.cyber() {
         gfx.split_text(
@@ -1072,7 +1095,7 @@ fn draw_card(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use errol_domain::entities::{Disk, Printer};
+    use errol_domain::entities::{Disk, Printer, Timestamp};
 
     #[test]
     fn the_printer_has_its_card_while_it_is_on() {
@@ -1105,5 +1128,39 @@ mod tests {
         let distinct: std::collections::HashSet<_> = rooms.iter().collect();
         assert_eq!(distinct.len(), rooms.len());
         assert_eq!(Card::Printer.room(), "Classe de Potions");
+    }
+
+    #[test]
+    fn the_carousel_turns_once_a_card_has_stayed_its_time() {
+        let list = [Card::OnePiece, Card::Server];
+        let mut carousel = Carousel::default();
+        assert_eq!(carousel.turn_to(1.0, &list), Card::OnePiece);
+        assert_eq!(carousel.take_walk(), None);
+        assert_eq!(carousel.turn_to(CARD_TIME, &list), Card::Server);
+        assert_eq!(carousel.previous, Some(Card::OnePiece));
+        assert_eq!(carousel.since, CARD_TIME);
+        assert!(carousel.take_walk().is_some());
+        assert_eq!(carousel.take_walk(), None);
+        assert_eq!(carousel.turn_to(CARD_TIME * 2.0, &list), Card::OnePiece);
+    }
+
+    #[test]
+    fn a_single_card_turns_without_footsteps() {
+        let mut carousel = Carousel::default();
+        assert_eq!(carousel.turn_to(CARD_TIME, &[Card::Server]), Card::Server);
+        assert_eq!(carousel.take_walk(), None);
+    }
+
+    #[test]
+    fn the_clock_counts_the_seconds_with_their_fraction() {
+        let at = Timestamp(1_793_814_671_250);
+        let s = seconds(&View {
+            snapshot: None,
+            read_at: at,
+            scene: errol_domain::strategies::Scene::Idle,
+            now: at,
+            warning: None,
+        });
+        assert!((s - 11.25).abs() < 1e-4);
     }
 }
