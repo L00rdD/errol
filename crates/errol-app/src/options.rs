@@ -71,21 +71,30 @@ impl Options {
         arg: &str,
         args: &mut Peekable<I>,
     ) -> Result<(), String> {
-        let mut value = |name: &str| {
-            args.next()
-                .ok_or_else(|| format!("{name} needs a value\n{USAGE}"))
-        };
         match arg {
-            "--look" => self.look = Look::parse(&value(arg)?).ok_or(USAGE)?,
             "--demo" => self.demo = Some(demo_scene(args)?),
-            "--feed" => self.feed_url = value(arg)?,
-            "--jellyfin" => self.jellyfin_url = value(arg)?,
             "--window" => self.windowed = true,
-            "--fps" => self.fps = value(arg)?.parse().map_err(|_| USAGE)?,
-            "--shot" => self.shot = Some(value(arg)?),
-            "--after" => self.shot_after = value(arg)?.parse().map_err(|_| USAGE)?,
             "-h" | "--help" => return Err(USAGE.into()),
+            "--look" | "--feed" | "--jellyfin" | "--fps" | "--shot" | "--after" => {
+                let value = args
+                    .next()
+                    .ok_or_else(|| format!("{arg} needs a value\n{USAGE}"))?;
+                self.set(arg, value)?;
+            }
             other => return Err(format!("unknown argument {other}\n{USAGE}")),
+        }
+        Ok(())
+    }
+
+    /// Sets what a flag with a value names.
+    fn set(&mut self, flag: &str, value: String) -> Result<(), &'static str> {
+        match flag {
+            "--look" => self.look = Look::parse(&value).ok_or(USAGE)?,
+            "--feed" => self.feed_url = value,
+            "--jellyfin" => self.jellyfin_url = value,
+            "--fps" => self.fps = value.parse().map_err(|_| USAGE)?,
+            "--shot" => self.shot = Some(value),
+            _ => self.shot_after = value.parse().map_err(|_| USAGE)?,
         }
         Ok(())
     }
