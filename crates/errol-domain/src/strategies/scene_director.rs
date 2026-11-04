@@ -43,6 +43,7 @@ impl SceneDirector {
             EventKind::Cover { .. } | EventKind::Projector { .. } | EventKind::Waiting { .. } => {
                 Some(40.0)
             }
+            EventKind::Print(_) => Some(60.0),
             EventKind::Download { .. } | EventKind::Import(_) => Some(90.0),
             EventKind::Scan(_) => Some(120.0),
             EventKind::Play { .. } => None,
@@ -274,6 +275,34 @@ mod tests {
         assert_eq!(order, ["c", "b"]);
         // the one cut short does not come back
         assert_eq!(director.scene(Timestamp::from_secs(50), None), Scene::Idle);
+    }
+
+    #[test]
+    fn a_print_takes_the_screen_for_a_minute() {
+        let print = event(
+            "p",
+            EventKind::Print(crate::entities::PrintNews {
+                phase: crate::entities::PrintPhase::Done,
+                printer: "M7".into(),
+                file: "riser".into(),
+                image: None,
+                layers: Some(2000),
+                remaining: None,
+                started: None,
+            }),
+        );
+        let mut director = SceneDirector::default();
+        director.absorb(&[]);
+        director.absorb(&[print]);
+        assert!(matches!(
+            director.scene(Timestamp::from_secs(0), None),
+            Scene::Event { .. }
+        ));
+        assert!(matches!(
+            director.scene(Timestamp::from_secs(59), None),
+            Scene::Event { .. }
+        ));
+        assert_eq!(director.scene(Timestamp::from_secs(60), None), Scene::Idle);
     }
 
     #[test]

@@ -20,6 +20,8 @@ pub struct Snapshot {
     pub services: Services,
     /// The Claude Code sessions of the Mac, while Cerebro answers.
     pub cerebro: Option<Cerebro>,
+    /// The resin printer and its print, while it is on.
+    pub printer: Option<Printer>,
     /// Sources the feed could not read, with the reason.
     pub warnings: Vec<String>,
     /// What the user asked of the screen, through the feed (its remote control).
@@ -304,4 +306,37 @@ pub enum ActorState {
     Asleep,
     /// Waiting for an answer: an exclamation mark blinks over it.
     Alert,
+}
+
+/// The resin printer, while it is on, and its latest print (the one going on,
+/// or the last one, finished or cancelled).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Printer {
+    pub name: String,
+    /// The print's state as the cloud names it: printing, done, cancelled,
+    /// preheating… None when the cloud does not say (no token).
+    pub state: Option<String>,
+    /// A print is going on.
+    pub active: bool,
+    pub file: Option<String>,
+    /// Percent done.
+    pub progress: Option<f64>,
+    pub layer: Option<u32>,
+    pub layers: Option<u32>,
+    /// Seconds left, while it prints.
+    pub remaining: Option<f64>,
+    /// When it should end, while it prints.
+    pub ends: Option<Timestamp>,
+    /// The slicer's picture of the print.
+    pub image: Option<PictureRef>,
+    /// What the cloud said when it gave no print ("no token", "token
+    /// rejected", "unreachable"…); None when it answers.
+    pub cloud: Option<String>,
+}
+
+impl Printer {
+    /// A print is on the plate or has just left it.
+    pub fn has_print(&self) -> bool {
+        self.state.is_some()
+    }
 }

@@ -4,7 +4,8 @@ use chrono::DateTime;
 use errol_domain::entities::{
     Actor, ActorState, Cerebro, Chapter, Cover, Disk, Download, Event, EventId, EventKind, House,
     Import, MediaKind, NextChapter, OnePiece, Outlet, PictureRef, Playing, Portfolio, Position,
-    Projector, Services, Session, SessionScene, SessionStatus, Settings, Snapshot, Timestamp,
+    PrintNews, PrintPhase, Printer, Projector, Services, Session, SessionScene, SessionStatus,
+    Settings, Snapshot, Timestamp,
 };
 use serde::{Deserialize, Deserializer};
 use serde_json::Value;
@@ -28,6 +29,7 @@ pub struct FeedFile {
     disk: Option<DiskModel>,
     services: Option<ServicesModel>,
     cerebro: Option<CerebroModel>,
+    printer: Option<PrinterModel>,
     #[serde(deserialize_with = "nullable")]
     errors: BTreeMap<String, Option<String>>,
     settings: Option<SettingsModel>,
@@ -282,6 +284,23 @@ struct SessionModel {
     scene: Option<SceneModel>,
 }
 
+#[derive(Debug, Deserialize, Default)]
+#[serde(default)]
+struct PrinterModel {
+    name: Option<String>,
+    cloud: Option<String>,
+    state: Option<String>,
+    #[serde(deserialize_with = "nullable")]
+    active: bool,
+    file: Option<String>,
+    progress: Option<f64>,
+    layer: Option<f64>,
+    layers: Option<f64>,
+    remaining: Option<f64>,
+    ends_at: Option<String>,
+    image: Option<String>,
+}
+
 /// A JSON null read as an absent field: the field's default. A source that
 /// answers `"on": null` (a projector just after a reboot) must not make the
 /// whole file unreadable.
@@ -341,6 +360,31 @@ fn scene_of(
             })
             .collect(),
     })
+}
+
+/// The printer as the feed writes it; its picture is a link of the slicer's
+/// cloud or a path on the home page, which keeps a copy of it.
+fn printer_of(
+    model: PrinterModel,
+    picture: &impl Fn(Option<String>) -> Option<PictureRef>,
+) -> Printer {
+    let whole = |value: Option<f64>| value.filter(|v| *v >= 0.0).map(|v| v as u32);
+    Printer {
+        name: model
+            .name
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| "Anycubic".into()),
+        state: model.state.filter(|state| !state.is_empty()),
+        active: model.active,
+        file: model.file.filter(|file| !file.is_empty()),
+        progress: model.progress,
+        layer: whole(model.layer),
+        layers: whole(model.layers).filter(|layers| *layers > 0),
+        remaining: model.remaining.filter(|left| *left >= 0.0),
+        ends: parse_time(model.ends_at.as_deref()),
+        image: picture(model.image),
+        cloud: model.cloud.filter(|cloud| cloud != "ok"),
+    }
 }
 
 /// A status Cerebro does not name reads as idle: nothing to show for it.
@@ -409,7 +453,7 @@ impl FeedFile {
                 .iter()
                 .filter_map(Value::as_object)
                 .map(|fields| fields.clone().into_iter().collect::<BTreeMap<_, _>>())
-                .filter_map(|fields| event(&fields))
+                .filter_map(|fields| event(&fields, &sprite))
                 .collect(),
             house: self.house.map(|house| House {
                 outlets: house
@@ -525,6 +569,7 @@ impl FeedFile {
                     })
                     .collect(),
             }),
+            printer: self.printer.map(|printer| printer_of(printer, &sprite)),
             warnings: self
                 .errors
                 .into_iter()
@@ -555,7 +600,11 @@ fn import(model: ImportModel, picture: &impl Fn(Option<String>) -> Option<Pictur
 }
 
 /// One event of the file; None for a kind this version does not know.
-fn event(fields: &BTreeMap<String, Value>) -> Option<Event> {
+/// `hub` makes a path on the home page absolute (a print's picture).
+fn event(
+    fields: &BTreeMap<String, Value>,
+    hub: &impl Fn(Option<String>) -> Option<PictureRef>,
+) -> Option<Event> {
     let text = |key: &str| fields.get(key).and_then(Value::as_str).map(str::to_owned);
     let flag = |key: &str| fields.get(key).and_then(Value::as_bool).unwrap_or(false);
     let number = |key: &str| fields.get(key).and_then(Value::as_u64);
@@ -605,6 +654,20 @@ fn event(fields: &BTreeMap<String, Value>) -> Option<Event> {
         "play" => EventKind::Play {
             title: text("title").unwrap_or_default(),
         },
+        "print" => EventKind::Print(PrintNews {
+            phase: match text("phase")?.as_str() {
+                "started" => PrintPhase::Started,
+                "done" => PrintPhase::Done,
+                "cancelled" => PrintPhase::Cancelled,
+                _ => return None,
+            },
+            printer: text("printer").unwrap_or_default(),
+            file: text("file").unwrap_or_default(),
+            image: hub(text("image")),
+            layers: number("layers").map(|layers| layers as u32),
+            remaining: fields.get("remaining").and_then(Value::as_f64),
+            started: parse_time(text("started_at").as_deref()),
+        }),
         _ => return None,
     };
     // the feed's ids carry their own counter; a missing one would make the event replay forever
@@ -644,7 +707,63 @@ mod tests {
             .iter()
             .map(|e| std::mem::discriminant(&e.kind))
             .collect();
-        assert_eq!(kinds.len(), 4);
+        assert_eq!(kinds.len(), 5);
+    }
+
+    #[test]
+    fn the_printer_is_read_with_its_print() {
+        let printer = snapshot().printer.unwrap();
+        assert_eq!(printer.name, "Anycubic Photon Mono M7");
+        assert_eq!(printer.state.as_deref(), Some("printing"));
+        assert!(printer.active && printer.has_print());
+        assert_eq!(printer.file.as_deref(), Some("01_Cafetière"));
+        assert_eq!(
+            (printer.progress, printer.layer, printer.layers),
+            (Some(5.0), Some(166), Some(2978))
+        );
+        assert_eq!(printer.remaining, Some(15840.0));
+        assert!(printer.ends.is_some());
+        assert_eq!(printer.cloud, None);
+        // the slicer's own link is kept as it is
+        assert!(
+            printer
+                .image
+                .unwrap()
+                .as_str()
+                .starts_with("https://cloud-slice")
+        );
+    }
+
+    #[test]
+    fn a_printer_without_the_cloud_has_no_print() {
+        let file = r#"{"printer": {"name": null, "cloud": "no token", "state": null, "active": false, "file": null,
+                        "progress": null, "layer": null, "layers": 0, "remaining": null, "image": null}}"#;
+        let printer = serde_json::from_str::<FeedFile>(file)
+            .unwrap()
+            .into_snapshot("", "")
+            .printer
+            .unwrap();
+        assert_eq!(printer.name, "Anycubic");
+        assert_eq!(printer.cloud.as_deref(), Some("no token"));
+        assert!(!printer.has_print());
+        assert_eq!((printer.layers, printer.image), (None, None));
+    }
+
+    #[test]
+    fn a_print_event_takes_its_picture_from_the_hub() {
+        let news = snapshot().events.into_iter().find_map(|e| match e.kind {
+            EventKind::Print(news) => Some(news),
+            _ => None,
+        });
+        let news = news.unwrap();
+        assert_eq!(news.phase, PrintPhase::Started);
+        assert_eq!(news.file, "01_Cafetière");
+        assert_eq!(
+            news.image.unwrap().as_str(),
+            "http://media.local/printer.jpg?v=1"
+        );
+        assert_eq!((news.layers, news.remaining), (Some(2978), Some(18720.0)));
+        assert!(news.started.is_some());
     }
 
     #[test]

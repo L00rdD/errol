@@ -126,6 +126,42 @@ pub fn duration(secs: f64) -> String {
     }
 }
 
+/// A long wait as one says it: "5 h 12", "12 min".
+pub fn hours(secs: f64) -> String {
+    let minutes = (secs.max(0.0) / 60.0).round() as u64;
+    if minutes >= 60 {
+        format!("{} h {:02}", minutes / 60, minutes % 60)
+    } else {
+        format!("{minutes} min")
+    }
+}
+
+/// What the screen calls a print's state.
+pub fn print_state(state: &str) -> &str {
+    match state {
+        "printing" => "en cours",
+        "done" => "terminée",
+        "cancelled" => "annulée",
+        "downloading" => "réception du fichier",
+        "checking" => "vérification",
+        "preheating" => "préchauffage",
+        "levelling" => "mise à niveau",
+        "slicing" => "découpage",
+        other => other,
+    }
+}
+
+/// Why a printer shows no print, from what its cloud said.
+pub fn print_cloud(cloud: &str) -> &str {
+    match cloud {
+        "no token" => "pas de jeton Anycubic : impression non suivie",
+        "token rejected" => "jeton Anycubic expiré",
+        "unreachable" => "cloud Anycubic injoignable",
+        "no printer on the account" => "aucune imprimante sur le compte",
+        other => other,
+    }
+}
+
 /// 6,4 Go / 1,43 To
 pub fn size(bytes: u64) -> String {
     let bytes = bytes as f64;
@@ -172,6 +208,21 @@ mod tests {
         assert_eq!(in_words(12, 30), "midi et demie");
         assert_eq!(in_words(23, 21), "onze heures vingt et un");
         assert_eq!(in_words(13, 39), "deux heures moins vingt et un");
+    }
+
+    #[test]
+    fn long_waits_in_hours_and_minutes() {
+        assert_eq!(hours(18_720.0), "5 h 12");
+        assert_eq!(hours(3_600.0), "1 h 00");
+        assert_eq!(hours(725.0), "12 min");
+    }
+
+    #[test]
+    fn print_states_and_cloud_words_in_french() {
+        assert_eq!(print_state("done"), "terminée");
+        assert_eq!(print_state("paused"), "paused");
+        assert_eq!(print_cloud("token rejected"), "jeton Anycubic expiré");
+        assert_eq!(print_cloud("odd"), "odd");
     }
 
     #[test]

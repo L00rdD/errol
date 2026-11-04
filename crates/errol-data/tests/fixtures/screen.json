@@ -6,6 +6,8 @@
    {"id": "1-2", "kind": "cover", "at": "2026-10-26T22:00:05+01:00", "name": "Écran", "cover": "screen", "target": 0, "moving": "up"},
    {"id": "1-3", "kind": "import", "at": "2026-10-26T22:01:00+01:00", "media": "episode", "title": "Arcane", "season": 2, "episode": 4, "quality": "WEBDL-1080p", "poster": "https://image.tmdb.org/t/p/w342/x.jpg"},
    {"id": "1-5", "kind": "cerebro", "at": "2026-10-26T22:01:30+01:00", "name": "errol-8b", "project": "~/personal/errol", "status": "waiting", "room": "Danger Room", "lead": "Cyclops"},
+   {"id": "1-6", "kind": "print", "at": "2026-10-26T22:03:00+01:00", "phase": "started", "printer": "Anycubic Photon Mono M7", "file": "01_Cafetière", "image": "/printer.jpg?v=1", "layers": 2978, "remaining": 18720, "started_at": "2026-10-26T22:02:40+01:00"},
+   {"id": "1-7", "kind": "print", "at": "2026-10-26T22:03:30+01:00", "phase": "paused"},
    {"id": "1-4", "kind": "teleport", "at": "2026-10-26T22:02:00+01:00"}],
  "house": {"outlets": [{"id": "desk-lamp", "name": "Desk lamp", "on": true, "at": null}], "covers": [{"id": "screen", "name": "Écran", "position": 0, "moving": null, "target": null}],
    "projectors": [{"id": "projector", "name": "Projecteur", "on": false, "app": null}]},
@@ -22,5 +24,8 @@
    {"id": "b", "name": "skylink-41", "project": "~/dronevolt/skylink", "status": "busy", "since": "2026-10-26T21:40:00+01:00", "room": "Rooftop Helipad", "lead": "Havok", "agents": 2},
    {"id": "c", "name": "pensieve-3c", "project": null, "status": "idle", "since": null, "room": null, "lead": null, "agents": null}],
    "busy": 1, "waiting": 1, "room_size": [192, 120], "character_size": [24, 24], "emotes": "/cerebro/ui/emotes.png", "link": "http://mac.local:4243/?key=x"},
+ "printer": {"name": "Anycubic Photon Mono M7", "cloud": "ok", "state": "printing", "active": true, "file": "01_Cafetière", "progress": 5.0, "layer": 166, "layers": 2978,
+   "remaining": 15840, "ends_at": "2026-10-27T02:32:00+01:00", "started_at": "2026-10-26T22:02:40+01:00", "height_mm": null, "resin_ml": null,
+   "image": "https://cloud-slice-prod.s3.us-east-2.amazonaws.com/cloud/a.jpg?X-Amz-Date=1"},
  "errors": {"house": "timeout"},
  "settings": {"look": "hogwarts", "follow_hub": true}}

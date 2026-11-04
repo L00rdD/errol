@@ -1,7 +1,7 @@
 //! A made-up evening, to see every scene without waiting for the house:
 //! a neon switches on, the projection screen comes down, the projector starts,
 //! a film plays, a Claude Code session waits for an answer, an episode and a
-//! download arrive, a new scan is out. Pictures
+//! download arrive, a new scan is out, a resin print finishes. Pictures
 //! come from TMDB. `DemoScene` other than `All` holds a single scene.
 
 use std::sync::Arc;
@@ -11,7 +11,8 @@ use errol_domain::DomainError;
 use errol_domain::entities::{
     Actor, ActorState, Cerebro, Chapter, Cover, Disk, Download, Event, EventId, EventKind, House,
     Import, MediaKind, NextChapter, OnePiece, Outlet, PictureRef, Playing, Portfolio, Position,
-    Projector, Services, Session, SessionScene, SessionStatus, Snapshot, Timestamp,
+    PrintNews, PrintPhase, Printer, Projector, Services, Session, SessionScene, SessionStatus,
+    Snapshot, Timestamp,
 };
 use errol_domain::ports::{Clock, FeedSource};
 
@@ -72,6 +73,7 @@ pub enum DemoScene {
     Download,
     Scan,
     Cerebro,
+    Print,
 }
 
 impl DemoScene {
@@ -87,6 +89,7 @@ impl DemoScene {
             "download" => Self::Download,
             "scan" => Self::Scan,
             "cerebro" => Self::Cerebro,
+            "print" => Self::Print,
             _ => return None,
         })
     }
@@ -168,7 +171,38 @@ fn timeline() -> Vec<(f64, DemoScene, EventKind)> {
                 pages: Some(17),
             }),
         ),
+        (
+            224.0,
+            DemoScene::Print,
+            EventKind::Print(PrintNews {
+                phase: PrintPhase::Started,
+                printer: "Anycubic Photon Mono M7".into(),
+                file: "04_riser_lychee".into(),
+                image: None,
+                layers: Some(2978),
+                remaining: Some(18_720.0),
+                started: None,
+            }),
+        ),
     ]
+}
+
+/// The resin printer, `done` percent into a print of 2978 layers.
+fn printer(now: Timestamp, done: f64) -> Printer {
+    let left = 18_720.0 * (1.0 - done / 100.0);
+    Printer {
+        name: "Anycubic Photon Mono M7".into(),
+        state: Some("printing".into()),
+        active: true,
+        file: Some("04_riser_lychee".into()),
+        progress: Some(done),
+        layer: Some((2978.0 * done / 100.0) as u32),
+        layers: Some(2978),
+        remaining: Some(left),
+        ends: Some(now.plus_secs(left)),
+        image: None,
+        cloud: None,
+    }
 }
 
 fn arcane() -> Import {
@@ -418,6 +452,42 @@ fn base(now: Timestamp) -> Snapshot {
     }
 }
 
+/// The house and the Mac `at` seconds into the evening: the neon, the screen
+/// coming down, the projector, the session that asked waiting until the end.
+fn evening(snapshot: &mut Snapshot, at: f64) {
+    if let Some(house) = &mut snapshot.house {
+        house.outlets[1].on = at >= 6.0;
+        let cover = &mut house.covers[0];
+        cover.position = ((at - 34.0) * 4.0).clamp(0.0, 100.0);
+        cover.moving = cover.position > 0.0 && cover.position < 100.0;
+        if at >= 76.0 {
+            house.projectors[0].on = true;
+            house.projectors[0].app = Some("Jellyfin".into());
+        }
+    }
+    if let Some(cerebro) = snapshot.cerebro.as_mut().filter(|_| at >= 122.0) {
+        cerebro.sessions[0].status = SessionStatus::Waiting;
+        if let Some(scene) = &mut cerebro.sessions[0].scene {
+            scene.actors[0].state = ActorState::Alert;
+        }
+        cerebro
+            .sessions
+            .sort_by_key(|s| s.status != SessionStatus::Waiting);
+    }
+}
+
+impl DemoFeedSource {
+    /// The print starts near the end of the evening; held, or on the idle
+    /// screen, it is well under way.
+    fn printer(&self, now: Timestamp, at: f64) -> Option<Printer> {
+        match self.scene {
+            DemoScene::All if at >= 224.0 => Some(printer(now, (at - 224.0) / 2.0)),
+            DemoScene::Idle | DemoScene::Print => Some(printer(now, 37.0)),
+            _ => None,
+        }
+    }
+}
+
 impl FeedSource for DemoFeedSource {
     fn fetch(&self) -> Result<Snapshot, DomainError> {
         let now = self.clock.now();
@@ -455,31 +525,95 @@ impl FeedSource for DemoFeedSource {
                 }
             }
         }
-        if let Some(house) = &mut snapshot.house {
-            house.outlets[1].on = at >= 6.0;
-            let cover = &mut house.covers[0];
-            cover.position = ((at - 34.0) * 4.0).clamp(0.0, 100.0);
-            cover.moving = cover.position > 0.0 && cover.position < 100.0;
-            if at >= 76.0 {
-                house.projectors[0].on = true;
-                house.projectors[0].app = Some("Jellyfin".into());
-            }
-        }
-        // the session that asked is waiting until the end of the evening
-        if let Some(cerebro) = snapshot.cerebro.as_mut().filter(|_| at >= 122.0) {
-            cerebro.sessions[0].status = SessionStatus::Waiting;
-            if let Some(scene) = &mut cerebro.sessions[0].scene {
-                scene.actors[0].state = ActorState::Alert;
-            }
-            cerebro
-                .sessions
-                .sort_by_key(|s| s.status != SessionStatus::Waiting);
-        }
+        evening(&mut snapshot, at);
+        snapshot.printer = self.printer(now, at);
         if at >= 110.0 || self.scene == DemoScene::Cinema {
             snapshot
                 .playing
                 .push(film(5230.0 + elapsed, (140.0..146.0).contains(&at)));
         }
         Ok(snapshot)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    struct Ticking(Mutex<i64>);
+    impl Clock for Ticking {
+        fn now(&self) -> Timestamp {
+            let mut secs = self.0.lock().unwrap();
+            *secs += 1;
+            Timestamp::from_secs(*secs)
+        }
+    }
+
+    fn source(scene: DemoScene) -> DemoFeedSource {
+        DemoFeedSource::new(scene, Arc::new(Ticking(Mutex::new(0))))
+    }
+
+    #[test]
+    fn every_scene_has_its_name() {
+        for name in [
+            "all",
+            "idle",
+            "light",
+            "cover",
+            "projector",
+            "cinema",
+            "import",
+            "download",
+            "scan",
+            "cerebro",
+            "print",
+        ] {
+            assert!(DemoScene::parse(name).is_some(), "{name}");
+        }
+        assert_eq!(DemoScene::parse(""), Some(DemoScene::All));
+        assert_eq!(DemoScene::parse("teleport"), None);
+    }
+
+    #[test]
+    fn a_held_print_shows_its_event_and_the_printer() {
+        let demo = source(DemoScene::Print);
+        assert_eq!(demo.fetch().unwrap().events.len(), 0);
+        let snapshot = demo.fetch().unwrap();
+        assert!(matches!(snapshot.events[0].kind, EventKind::Print(_)));
+        assert_eq!(snapshot.printer.unwrap().progress, Some(37.0));
+    }
+
+    #[test]
+    fn the_whole_evening_starts_with_the_house_and_no_print() {
+        let demo = source(DemoScene::All);
+        demo.fetch().unwrap();
+        let snapshot = demo.fetch().unwrap();
+        assert!(snapshot.printer.is_none());
+        assert_eq!(snapshot.playing.len(), 0);
+        assert!(!snapshot.house.unwrap().outlets[1].on);
+    }
+
+    #[test]
+    fn late_in_the_evening_everything_happened() {
+        let mut snapshot = base(Timestamp(0));
+        evening(&mut snapshot, 230.0);
+        let house = snapshot.house.unwrap();
+        assert!(house.outlets[1].on && house.projectors[0].on);
+        assert_eq!(house.covers[0].position, 100.0);
+        assert_eq!(
+            snapshot.cerebro.unwrap().sessions[0].status,
+            SessionStatus::Waiting
+        );
+        let demo = source(DemoScene::All);
+        assert_eq!(
+            demo.printer(Timestamp(0), 230.0).unwrap().progress,
+            Some(3.0)
+        );
+        assert!(
+            source(DemoScene::Light)
+                .printer(Timestamp(0), 6.0)
+                .is_none()
+        );
     }
 }

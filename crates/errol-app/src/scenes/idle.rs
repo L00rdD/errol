@@ -1,7 +1,7 @@
 //! The idle recap: a clock in its rings (the Time-Turner on the Map), and a
 //! carousel of cards (One Piece, a trading bot, the house, the Claude Code
-//! sessions of the Mac, downloads, the latest additions, the server), rooms
-//! of the castle on the Map.
+//! sessions of the Mac, downloads, the print on the resin printer, the latest
+//! additions, the server), rooms of the castle on the Map.
 
 use std::f32::consts::TAU;
 
@@ -9,7 +9,7 @@ use errol_domain::entities::{MediaKind, Snapshot};
 use errol_domain::usecases::View;
 use femtovg::Color;
 
-use super::{BOTTOM, TOP, text, turner, xmansion};
+use super::{BOTTOM, TOP, printer, text, turner, xmansion};
 use crate::anim::{decode, ease_out, progress};
 use crate::look::{fade, mix};
 use crate::render::{Anchor, Face, Finish, Gfx, Textures, Type, ink};
@@ -19,9 +19,9 @@ const CARD_TIME: f32 = 7.0;
 /// Seconds a card takes to slide in or out.
 const SLIDE: f32 = 0.8;
 const CARD_X: f32 = 286.0;
-const CARD_Y: f32 = TOP + 26.0;
-const CARD_W: f32 = 490.0;
-const CARD_H: f32 = BOTTOM - 40.0 - CARD_Y;
+pub const CARD_Y: f32 = TOP + 26.0;
+pub const CARD_W: f32 = 490.0;
+pub const CARD_H: f32 = BOTTOM - 40.0 - CARD_Y;
 /// A box: x, y, w, h.
 pub type Box = (f32, f32, f32, f32);
 /// The Time-Turner's centre and scale on the Map, and the box it stands in
@@ -37,6 +37,7 @@ enum Card {
     House,
     Cerebro,
     Downloads,
+    Printer,
     Recent,
     Server,
 }
@@ -50,6 +51,7 @@ impl Card {
             Self::House => "Grande Salle",
             Self::Cerebro => "Bureau de Dumbledore",
             Self::Downloads => "Volière",
+            Self::Printer => "Classe de Potions",
             Self::Recent => "Salle sur Demande",
             Self::Server => "Tour d'astronomie",
         }
@@ -86,6 +88,9 @@ fn cards(snapshot: &Snapshot) -> Vec<Card> {
     }
     if !snapshot.downloads.is_empty() {
         cards.push(Card::Downloads);
+    }
+    if snapshot.printer.is_some() {
+        cards.push(Card::Printer);
     }
     if snapshot.recent.iter().any(|import| import.poster.is_some()) {
         cards.push(Card::Recent);
@@ -353,7 +358,7 @@ fn frame(gfx: &mut Gfx, x: f32, card: Card) {
     }
 }
 
-fn big(gfx: &mut Gfx, x: f32, y: f32, value: &str, colour: Color) {
+pub(super) fn big(gfx: &mut Gfx, x: f32, y: f32, value: &str, colour: Color) {
     if gfx.hogwarts() {
         gfx.title(
             x,
@@ -414,7 +419,7 @@ fn heading(gfx: &mut Gfx, x: f32, y: f32, value: &str, age: f32) -> f32 {
     lines.len() as f32 * line
 }
 
-fn row(gfx: &mut Gfx, x: f32, y: f32, label: &str, value: &str, colour: Color) {
+pub(super) fn row(gfx: &mut Gfx, x: f32, y: f32, label: &str, value: &str, colour: Color) {
     let palette = gfx.palette;
     let style = Type::new(Face::Body, 16.0);
     gfx.text(x, y, label, style, palette.muted, Anchor::TOP_LEFT);
@@ -509,7 +514,7 @@ fn plate(gfx: &mut Gfx, x: f32, y: f32, w: f32, h: f32, value: &str, size: f32, 
 /// it on their rings (figure, name, lit), sized for `columns` of them; the
 /// names in red under the plates, in muted ink when unlit. Returns the
 /// height used.
-fn scoreboard(
+pub(super) fn scoreboard(
     gfx: &mut Gfx,
     x: f32,
     y: f32,
@@ -896,6 +901,11 @@ fn draw_card(
                 y += 72.0;
             }
         }
+        Card::Printer => {
+            if let Some(p) = &snapshot.printer {
+                printer::card(gfx, p, view, (left, top), kicker, age, textures);
+            }
+        }
         Card::Recent => {
             gfx.kicker(left, top, "Ajouté récemment", kicker);
             let mut bx = left;
@@ -1057,4 +1067,43 @@ fn draw_card(
         }
     }
     gfx.canvas.restore();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use errol_domain::entities::{Disk, Printer};
+
+    #[test]
+    fn the_printer_has_its_card_while_it_is_on() {
+        let mut snapshot = Snapshot {
+            disk: Some(Disk {
+                total: 2,
+                used: 1,
+                free: 1,
+            }),
+            ..Snapshot::default()
+        };
+        assert_eq!(cards(&snapshot), [Card::Server]);
+        snapshot.printer = Some(Printer::default());
+        assert_eq!(cards(&snapshot), [Card::Printer, Card::Server]);
+    }
+
+    #[test]
+    fn every_card_is_a_room_of_the_castle() {
+        let rooms = [
+            Card::OnePiece,
+            Card::Portfolio,
+            Card::House,
+            Card::Cerebro,
+            Card::Downloads,
+            Card::Printer,
+            Card::Recent,
+            Card::Server,
+        ]
+        .map(Card::room);
+        let distinct: std::collections::HashSet<_> = rooms.iter().collect();
+        assert_eq!(distinct.len(), rooms.len());
+        assert_eq!(Card::Printer.room(), "Classe de Potions");
+    }
 }

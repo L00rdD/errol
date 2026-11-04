@@ -1,7 +1,7 @@
 //! The line scrolling at the bottom: One Piece, a trading bot, downloads, the
-//! latest additions, the free space.
+//! print on the resin printer, the latest additions, the free space.
 
-use errol_domain::entities::MediaKind;
+use errol_domain::entities::{MediaKind, Snapshot};
 use errol_domain::usecases::View;
 
 use super::text;
@@ -34,58 +34,7 @@ impl Ticker {
         let Some(snapshot) = &view.snapshot else {
             return;
         };
-        let mut items: Vec<(String, String)> = Vec::new();
-        if let Some(one_piece) = &snapshot.one_piece {
-            let next = one_piece
-                .next
-                .as_ref()
-                .map(|next| format!(" · {} {}", next.number, text::weekday(next.at)))
-                .unwrap_or_default();
-            items.push((
-                "ONE PIECE".into(),
-                format!(
-                    "scan {} « {} »{next}",
-                    one_piece.latest.number, one_piece.latest.name
-                ),
-            ));
-        }
-        if let Some(portfolio) = &snapshot.portfolio {
-            items.push((
-                portfolio.name.to_uppercase(),
-                format!(
-                    "{:.2} $ ({}) · {} trades",
-                    portfolio.equity,
-                    text::percent(portfolio.change()),
-                    portfolio.trades
-                ),
-            ));
-        }
-        for download in &snapshot.downloads {
-            items.push((
-                "FLUX".into(),
-                format!(
-                    "{} {:.0} %",
-                    text::release(&download.name),
-                    download.percent
-                ),
-            ));
-        }
-        for import in snapshot.recent.iter().take(3) {
-            let detail = match import.kind {
-                MediaKind::Episode => format!(" {}", text::episode(import.season, import.episode)),
-                MediaKind::Movie => import
-                    .year
-                    .map(|year| format!(" ({year})"))
-                    .unwrap_or_default(),
-            };
-            items.push(("AJOUTÉ".into(), format!("{}{detail}", import.title)));
-        }
-        if let Some(disk) = snapshot.disk {
-            items.push((
-                "STOCKAGE".into(),
-                format!("{} libres", text::size(disk.free)),
-            ));
-        }
+        let items = items(snapshot);
         // hogwarts prints the labels in red and the news in an italic hand
         let (label_style, value_style, label_colour) = if gfx.hogwarts() {
             (
@@ -158,5 +107,117 @@ impl Ticker {
             }
         }
         gfx.canvas.restore();
+    }
+}
+
+/// The news of the line: (label, value), in the order they run.
+fn items(snapshot: &Snapshot) -> Vec<(String, String)> {
+    let mut items: Vec<(String, String)> = Vec::new();
+    if let Some(one_piece) = &snapshot.one_piece {
+        let next = one_piece
+            .next
+            .as_ref()
+            .map(|next| format!(" · {} {}", next.number, text::weekday(next.at)))
+            .unwrap_or_default();
+        items.push((
+            "ONE PIECE".into(),
+            format!(
+                "scan {} « {} »{next}",
+                one_piece.latest.number, one_piece.latest.name
+            ),
+        ));
+    }
+    if let Some(portfolio) = &snapshot.portfolio {
+        items.push((
+            portfolio.name.to_uppercase(),
+            format!(
+                "{:.2} $ ({}) · {} trades",
+                portfolio.equity,
+                text::percent(portfolio.change()),
+                portfolio.trades
+            ),
+        ));
+    }
+    for download in &snapshot.downloads {
+        items.push((
+            "FLUX".into(),
+            format!(
+                "{} {:.0} %",
+                text::release(&download.name),
+                download.percent
+            ),
+        ));
+    }
+    if let Some(printer) = snapshot.printer.as_ref().filter(|printer| printer.active) {
+        let left = printer
+            .remaining
+            .map(|left| format!(" · reste {}", text::hours(left)))
+            .unwrap_or_default();
+        items.push((
+            "IMPRESSION".into(),
+            format!(
+                "{} {:.0} %{left}",
+                text::release(printer.file.as_deref().unwrap_or("")),
+                printer.progress.unwrap_or_default()
+            ),
+        ));
+    }
+    for import in snapshot.recent.iter().take(3) {
+        let detail = match import.kind {
+            MediaKind::Episode => format!(" {}", text::episode(import.season, import.episode)),
+            MediaKind::Movie => import
+                .year
+                .map(|year| format!(" ({year})"))
+                .unwrap_or_default(),
+        };
+        items.push(("AJOUTÉ".into(), format!("{}{detail}", import.title)));
+    }
+    if let Some(disk) = snapshot.disk {
+        items.push((
+            "STOCKAGE".into(),
+            format!("{} libres", text::size(disk.free)),
+        ));
+    }
+    items
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use errol_domain::entities::{Disk, Download, Printer};
+
+    #[test]
+    fn a_print_going_on_runs_on_the_line() {
+        let mut snapshot = Snapshot {
+            downloads: vec![Download {
+                name: "Dune".into(),
+                percent: 50.0,
+                eta: None,
+            }],
+            disk: Some(Disk {
+                total: 2,
+                used: 1,
+                free: 1_000_000_000,
+            }),
+            printer: Some(Printer {
+                name: "M7".into(),
+                state: Some("printing".into()),
+                active: true,
+                file: Some("04_riser".into()),
+                progress: Some(37.4),
+                remaining: Some(3_660.0),
+                ..Printer::default()
+            }),
+            ..Snapshot::default()
+        };
+        let labels: Vec<_> = items(&snapshot).into_iter().collect();
+        assert_eq!(
+            labels[1],
+            ("IMPRESSION".into(), "04 riser 37 % · reste 1 h 01".into())
+        );
+        assert_eq!(labels.len(), 3);
+        // a print over leaves the line
+        snapshot.printer.as_mut().unwrap().active = false;
+        assert_eq!(items(&snapshot).len(), 2);
     }
 }

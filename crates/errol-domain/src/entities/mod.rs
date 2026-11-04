@@ -5,11 +5,11 @@ mod feed;
 mod picture;
 mod time;
 
-pub use event::{Event, EventId, EventKind};
+pub use event::{Event, EventId, EventKind, PrintNews, PrintPhase};
 pub use feed::{
     Actor, ActorState, Cerebro, Chapter, Cover, Disk, Download, House, Import, MediaKind,
-    NextChapter, OnePiece, Outlet, Playing, Portfolio, Position, Projector, Services, Session,
-    SessionScene, SessionStatus, Settings, Snapshot,
+    NextChapter, OnePiece, Outlet, Playing, Portfolio, Position, Printer, Projector, Services,
+    Session, SessionScene, SessionStatus, Settings, Snapshot,
 };
 pub use picture::{Picture, PictureRef};
 pub use time::Timestamp;

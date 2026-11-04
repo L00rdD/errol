@@ -6,7 +6,8 @@ Errol is a living-room screen for a home server. It runs on a Raspberry Pi
 with a small HDMI display (800 × 480) and shows what is happening at home:
 what plays on Jellyfin, which lamp just switched on, a download that finished,
 a film that entered the library, the next One Piece chapter, a trading bot's
-portfolio, a Claude Code session on the Mac waiting for an answer. Something happens, and Errol takes the screen for a minute to tell
+portfolio, a Claude Code session on the Mac waiting for an answer, a resin
+print going on. Something happens, and Errol takes the screen for a minute to tell
 you. A film starts, and the screen turns into a cinema marquee for as long as
 it plays.
 
@@ -49,8 +50,8 @@ copy of it, built into the binary.
 
 | Scene | When | For how long |
 | :--- | :--- | :--- |
-| Idle | nothing else | A clock in its turning rings, and cards that slide by every 7 s: the next One Piece chapter with a countdown, the portfolio, the house, the Mac's Claude Code sessions (drawn as Cerebro draws them: its X-Mansion rooms and X-Men, in pixel art), downloads, latest additions with their posters, the server's free space |
-| Event | a lamp switches; the projection screen moves (its cloth comes down live); the projector starts or changes app; a download finishes; a film or an episode is imported; a new chapter is out; a Claude Code session waits for an answer | 25 s for a lamp, 40 s for the screen, the projector and a session, 90 s for downloads and imports, 2 min for a chapter. A new event cuts the one on screen short and shows at once; those still waiting follow it, and a burst (ten episodes imported at once) takes a single turn |
+| Idle | nothing else | A clock in its turning rings, and cards that slide by every 7 s: the next One Piece chapter with a countdown, the portfolio, the house, the Mac's Claude Code sessions (drawn as Cerebro draws them: its X-Mansion rooms and X-Men, in pixel art), downloads, the resin printer while it is on (the slicer's picture of the print, progress, layers, time left), latest additions with their posters, the server's free space |
+| Event | a lamp switches; the projection screen moves (its cloth comes down live); the projector starts or changes app; a download finishes; a film or an episode is imported; a new chapter is out; a Claude Code session waits for an answer; a print starts, finishes or is cancelled | 25 s for a lamp, 40 s for the screen, the projector and a session, 1 min for a print, 90 s for downloads and imports, 2 min for a chapter. A new event cuts the one on screen short and shows at once; those still waiting follow it, and a burst (ten episodes imported at once) takes a single turn |
 | Cinema | a video plays on Jellyfin | Until it stops: the blurred backdrop drifting, the poster in a holographic frame, the story, progress and end time |
 
 The screen never replays the past: what happened before it started only sets
@@ -99,7 +100,10 @@ Every field is optional: Errol shows what it gets and hides the rest.
      "episode_title": "…", "quality": "WEBDL-1080p", "poster": "https://image.tmdb.org/t/p/w342/…"},
     {"id": "1-6", "kind": "scan", "at": "…", "scan": 1197, "name": "…", "arc": "Elbaf", "pages": 17},
     {"id": "1-7", "kind": "cerebro", "at": "…", "name": "errol-8b", "project": "~/personal/errol",
-     "status": "waiting", "room": "Danger Room"}
+     "status": "waiting", "room": "Danger Room"},
+    {"id": "1-8", "kind": "print", "at": "…", "phase": "started",   // or "done", "cancelled"
+     "printer": "Anycubic Photon Mono M7", "file": "04_riser", "image": "/printer.jpg?…",
+     "layers": 2978, "remaining": 18720, "started_at": "…"}           // seconds left
   ],
   "house": {
     "outlets": [{"id": "desk-lamp", "name": "Desk lamp", "on": true}],
@@ -122,6 +126,10 @@ Every field is optional: Errol shows what it gets and hides the rest.
               "actors": [{"id": "lead:…", "name": "Cyclops", "sprite": "/cerebro/characters/cyclops.png",
                           "move": "walk", "power": "beam", "color": "#FF2A2A", "aura": null, "state": "alert"}]}}],
    "room_size": [192, 120], "character_size": [24, 24], "emotes": "/cerebro/ui/emotes.png"},
+  "printer": {"name": "Anycubic Photon Mono M7", "state": "printing", "active": true,   // while it is on
+              "file": "04_riser", "progress": 37.0, "layer": 1102, "layers": 2978,
+              "remaining": 11800, "ends_at": "…", "image": "https://…",   // a path on the hub, or a URL
+              "cloud": "ok"},                 // else why there is no print: "no token"…
   "errors": {"house": "timeout"},     // sources the feed could not read
   "settings": {"look": "hogwarts",    // the look to show now; null keeps Errol's own
                "follow_hub": true}    // for the feed: the home page sets the look when its own changes
@@ -146,7 +154,7 @@ cargo run -p errol-app -- --demo scan --shot scan.png --after 6   # a PNG, no wi
 ```
 
 The demo scenes are `idle`, `light`, `cover`, `projector`, `cinema`, `import`,
-`download` and `scan`. Escape or Q closes the window.
+`download`, `scan`, `cerebro` and `print`. Escape or Q closes the window.
 
 ### On a Raspberry Pi
 

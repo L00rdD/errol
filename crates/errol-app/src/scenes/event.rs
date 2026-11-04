@@ -1,17 +1,18 @@
 //! An event takes the screen: a picture of what happened on the left (a lamp,
 //! the projection screen, the projector's beam, a poster, a check, a chapter
-//! number, the room of a Claude Code session as Cerebro draws it), what it
-//! is on the right, and a bar draining until the next scene.
+//! number, the room of a Claude Code session as Cerebro draws it, the slicer's
+//! picture of a print), what it is on the right, and a bar draining until the
+//! next scene.
 //! On the Map it is a notice of the Gazette pinned over the castle, its tags
 //! stamped in red ink.
 
 use std::f32::consts::TAU;
 
-use errol_domain::entities::{Event, EventKind};
+use errol_domain::entities::{Event, EventKind, PrintNews, PrintPhase};
 use errol_domain::usecases::View;
 use femtovg::{Color, Paint, Path};
 
-use super::{BOTTOM, TOP, text, xmansion};
+use super::{BOTTOM, TOP, printer, text, xmansion};
 use crate::anim::{decode, ease_back, ease_out, progress};
 use crate::look::{fade, rgb};
 use crate::render::{Anchor, Face, Finish, Gfx, Textures, Type, ink};
@@ -337,7 +338,88 @@ fn visual(
             )
         }
         EventKind::Play { title } => ("Lecture".into(), title.clone(), String::new(), vec![]),
+        EventKind::Print(news) => print(gfx, event, news, age, textures),
     }
+}
+
+/// A print that started, finished or was cancelled: the slicer's picture, or
+/// the vat filling (started), a check (done), a cross (cancelled).
+fn print(
+    gfx: &mut Gfx,
+    event: &Event,
+    news: &PrintNews,
+    age: f32,
+    textures: &mut Textures,
+) -> (String, String, String, Vec<String>) {
+    let image = news
+        .image
+        .as_ref()
+        .and_then(|image| printer::load(gfx, image, textures));
+    if let Some(image) = image {
+        print_picture(gfx, image, age);
+    } else {
+        halos(gfx, age);
+        match news.phase {
+            PrintPhase::Started => {
+                let rising = f64::from(ease_out(progress(age - 0.3, 4.0)));
+                printer::vat(gfx, CX, CY, 1.5, 100.0 * rising);
+            }
+            PrintPhase::Done => check(gfx, age),
+            PrintPhase::Cancelled => cross(gfx, age),
+        }
+    }
+    print_words(event, news)
+}
+
+/// The slicer's picture, in the look's frame.
+fn print_picture(gfx: &mut Gfx, image: femtovg::ImageId, age: f32) {
+    let (w, h) = (288.0, 216.0);
+    let (x, y) = (CX - w / 2.0, CY - h / 2.0);
+    if gfx.hogwarts() {
+        printer::shot(gfx, image, (x, y, w, h), ease_out(progress(age, 0.6)));
+        return;
+    }
+    gfx.halo(CX, CY, w, fade(gfx.palette.accent, 0.18));
+    printer::shot(gfx, image, (x, y, w, h), ease_out(progress(age, 0.6)));
+    let corner = if gfx.cyber() {
+        gfx.palette.hot
+    } else {
+        gfx.palette.accent
+    };
+    gfx.brackets(x - 8.0, y - 8.0, w + 16.0, h + 16.0, 26.0, corner, 2.0);
+}
+
+/// What a print event says: (kicker, title, subtitle, tags).
+fn print_words(event: &Event, news: &PrintNews) -> (String, String, String, Vec<String>) {
+    // how long it took, from its start to the event
+    let took = news
+        .started
+        .map(|started| text::hours(event.at.secs_since(started)));
+    let (kicker, sub) = match news.phase {
+        PrintPhase::Started => (
+            "Impression 3D lancée",
+            news.remaining
+                .map(|left| format!("fin vers {}", text::clock(event.at.plus_secs(left))))
+                .unwrap_or_default(),
+        ),
+        PrintPhase::Done => (
+            "Impression 3D terminée",
+            took.map(|took| format!("en {took}")).unwrap_or_default(),
+        ),
+        PrintPhase::Cancelled => (
+            "Impression 3D annulée",
+            took.map(|took| format!("après {took}")).unwrap_or_default(),
+        ),
+    };
+    (
+        kicker.into(),
+        text::release(&news.file),
+        sub,
+        news.layers
+            .map(|layers| format!("{layers} couches"))
+            .into_iter()
+            .collect(),
+    )
 }
 
 /// Rings (friday, in ink on the Map) or diamonds (cyberpunk) widening from
@@ -630,6 +712,27 @@ fn check(gfx: &mut Gfx, age: f32) {
     }
 }
 
+/// A circle drawing itself, then a cross: something stopped.
+fn cross(gfx: &mut Gfx, age: f32) {
+    let hot = gfx.palette.hot;
+    let circle = ease_out(progress(age - 0.2, 1.2));
+    gfx.ring(CX, CY, 78.0, 4.0, hot, &[], -TAU / 4.0, TAU * circle);
+    let bars = ease_out(progress(age - 1.2, 0.6));
+    if bars > 0.0 {
+        let reach = 30.0 * bars;
+        let mut path = Path::new();
+        path.move_to(CX - 30.0, CY - 30.0);
+        path.line_to(CX - 30.0 + 2.0 * reach, CY - 30.0 + 2.0 * reach);
+        path.move_to(CX + 30.0, CY - 30.0);
+        path.line_to(CX + 30.0 - 2.0 * reach, CY - 30.0 + 2.0 * reach);
+        gfx.halo(CX, CY, 60.0, fade(hot, 0.18 * bars));
+        let paint = Paint::color(hot)
+            .with_line_width(9.0)
+            .with_line_cap(femtovg::LineCap::Round);
+        gfx.canvas.stroke_path(&path, &paint);
+    }
+}
+
 /// A poster in a holographic frame: brackets, a slow sway, a light sweeping
 /// down. On the Map, a photograph of the Gazette, pinned.
 #[allow(clippy::many_single_char_names)] // a box: x, y, w, h
@@ -674,4 +777,58 @@ pub fn poster(gfx: &mut Gfx, image: femtovg::ImageId, x: f32, y: f32, w: f32, h:
         palette.accent
     };
     gfx.brackets(x - 8.0, y - 8.0, w + 16.0, h + 16.0, 26.0, corner, 2.0);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use errol_domain::entities::{EventId, Timestamp};
+
+    fn news(phase: PrintPhase) -> (Event, PrintNews) {
+        let news = PrintNews {
+            phase,
+            printer: "M7".into(),
+            file: "04_riser.v2".into(),
+            image: None,
+            layers: Some(2978),
+            remaining: Some(3_600.0),
+            started: Some(Timestamp::from_secs(0)),
+        };
+        let event = Event {
+            id: EventId::new("p"),
+            at: Timestamp::from_secs(18_720),
+            kind: EventKind::Print(news.clone()),
+        };
+        (event, news)
+    }
+
+    #[test]
+    fn a_print_is_told_by_its_phase() {
+        let (event, started) = news(PrintPhase::Started);
+        let (kicker, title, sub, tags) = print_words(&event, &started);
+        assert_eq!(
+            (kicker.as_str(), title.as_str()),
+            ("Impression 3D lancée", "04 riser v2")
+        );
+        assert!(sub.starts_with("fin vers "));
+        assert_eq!(tags, ["2978 couches"]);
+        let (event, done) = news(PrintPhase::Done);
+        assert_eq!(print_words(&event, &done).2, "en 5 h 12");
+        let (event, cancelled) = news(PrintPhase::Cancelled);
+        let (kicker, _, sub, _) = print_words(&event, &cancelled);
+        assert_eq!(
+            (kicker.as_str(), sub.as_str()),
+            ("Impression 3D annulée", "après 5 h 12")
+        );
+    }
+
+    #[test]
+    fn without_times_nothing_under_the_title() {
+        let (event, mut done) = news(PrintPhase::Done);
+        done.started = None;
+        assert_eq!(print_words(&event, &done).2, "");
+        let (event, mut started) = news(PrintPhase::Started);
+        started.remaining = None;
+        assert_eq!(print_words(&event, &started).2, "");
+    }
 }

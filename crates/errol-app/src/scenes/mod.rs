@@ -6,6 +6,7 @@ mod cinema;
 mod event;
 mod header;
 mod idle;
+mod printer;
 mod text;
 mod ticker;
 mod turner;
