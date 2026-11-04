@@ -396,57 +396,30 @@ fn status(text: Option<&str>) -> SessionStatus {
     }
 }
 
+/// A picture path made absolute on `origin`, unless it is a URL already.
+fn absolute(origin: &str, path: Option<String>) -> Option<PictureRef> {
+    path.filter(|path| !path.is_empty()).map(|path| {
+        if path.starts_with("http") {
+            PictureRef::new(path)
+        } else {
+            PictureRef::new(format!("{origin}{path}"))
+        }
+    })
+}
+
 impl FeedFile {
     /// Turns the file into a snapshot. Jellyfin pictures are paths on the
     /// Jellyfin server, made absolute with `jellyfin`; Cerebro's sprites are
     /// paths on the home page (`hub`, its origin), which passes them on.
     pub fn into_snapshot(self, jellyfin: &str, hub: &str) -> Snapshot {
-        let sprite = |path: Option<String>| {
-            path.filter(|path| !path.is_empty()).map(|path| {
-                if path.starts_with("http") {
-                    PictureRef::new(path)
-                } else {
-                    PictureRef::new(format!("{hub}{path}"))
-                }
-            })
-        };
-        let picture = |path: Option<String>| {
-            path.filter(|path| !path.is_empty()).map(|path| {
-                if path.starts_with("http") {
-                    PictureRef::new(path)
-                } else {
-                    PictureRef::new(format!("{jellyfin}{path}"))
-                }
-            })
-        };
+        let sprite = |path: Option<String>| absolute(hub, path);
+        let picture = |path: Option<String>| absolute(jellyfin, path);
         Snapshot {
             updated_at: parse_time(self.updated_at.as_deref()).unwrap_or_default(),
             playing: self
                 .playing
                 .into_iter()
-                .map(|item| Playing {
-                    kind: if item.kind == "episode" {
-                        MediaKind::Episode
-                    } else {
-                        MediaKind::Movie
-                    },
-                    title: item.title.unwrap_or_default(),
-                    series: item.series,
-                    season: item.season,
-                    episode: item.episode,
-                    year: item.year,
-                    overview: item.overview,
-                    genres: item.genres,
-                    runtime: item.runtime,
-                    position: item.position,
-                    paused: item.paused,
-                    device: item.device.unwrap_or_default(),
-                    client: item.client.unwrap_or_default(),
-                    user: item.user.unwrap_or_default(),
-                    poster: picture(item.poster),
-                    backdrop: picture(item.backdrop),
-                    id: item.id,
-                })
+                .map(|item| playing_of(item, &picture))
                 .collect(),
             events: self
                 .events
@@ -455,89 +428,15 @@ impl FeedFile {
                 .map(|fields| fields.clone().into_iter().collect::<BTreeMap<_, _>>())
                 .filter_map(|fields| event(&fields, &sprite))
                 .collect(),
-            house: self.house.map(|house| House {
-                outlets: house
-                    .outlets
-                    .into_iter()
-                    .map(|o| Outlet {
-                        id: o.id,
-                        name: o.name,
-                        on: o.on,
-                    })
-                    .collect(),
-                covers: house
-                    .covers
-                    .into_iter()
-                    .map(|c| Cover {
-                        id: c.id,
-                        name: c.name,
-                        position: c.position.unwrap_or_default(),
-                        moving: c.moving.is_some_and(|moving| {
-                            !moving.is_null() && moving != Value::Bool(false)
-                        }),
-                    })
-                    .collect(),
-                projectors: house
-                    .projectors
-                    .into_iter()
-                    .map(|p| Projector {
-                        id: p.id,
-                        name: p.name,
-                        on: p.on,
-                        app: p.app,
-                    })
-                    .collect(),
-            }),
-            downloads: self
-                .downloads
-                .into_iter()
-                .map(|d| Download {
-                    name: d.name,
-                    percent: d.percent,
-                    eta: d.eta.filter(|eta| *eta >= 0.0),
-                })
-                .collect(),
+            house: self.house.map(house_of),
+            downloads: self.downloads.into_iter().map(download_of).collect(),
             recent: self
                 .recent
                 .into_iter()
                 .map(|i| import(i, &picture))
                 .collect(),
-            one_piece: self.one_piece.and_then(|k| {
-                let latest = k.latest?;
-                Some(OnePiece {
-                    latest: Chapter {
-                        number: latest.scan,
-                        name: latest.name,
-                        arc: latest.arc,
-                        pages: latest.pages,
-                    },
-                    next: k.next.and_then(|n| {
-                        Some(NextChapter {
-                            number: n.scan,
-                            at: parse_time(Some(&n.at))?,
-                        })
-                    }),
-                })
-            }),
-            portfolio: self.portfolio.map(|d| Portfolio {
-                name: d
-                    .name
-                    .filter(|name| !name.is_empty())
-                    .unwrap_or_else(|| "Portfolio".into()),
-                mode: d.mode,
-                equity: d.equity,
-                initial: d.initial,
-                trades: d.trades,
-                positions: d
-                    .positions
-                    .into_iter()
-                    .map(|p| Position {
-                        pair: p.pair,
-                        average_price: p.avg,
-                        price: p.price,
-                    })
-                    .collect(),
-            }),
+            one_piece: self.one_piece.and_then(one_piece_of),
+            portfolio: self.portfolio.map(portfolio_of),
             disk: self.disk.map(|d| Disk {
                 total: d.total,
                 used: d.used,
@@ -550,25 +449,7 @@ impl FeedFile {
                     total: s.total,
                 })
                 .unwrap_or_default(),
-            cerebro: self.cerebro.map(|cerebro| Cerebro {
-                room_size: cerebro.room_size.unwrap_or((192, 120)),
-                character_size: cerebro.character_size.unwrap_or((24, 24)),
-                emotes: sprite(cerebro.emotes),
-                sessions: cerebro
-                    .sessions
-                    .into_iter()
-                    .map(|s| Session {
-                        status: status(s.status.as_deref()),
-                        since: parse_time(s.since.as_deref()),
-                        name: s.name,
-                        project: s.project.filter(|project| !project.is_empty()),
-                        room: s.room,
-                        lead: s.lead,
-                        agents: s.agents,
-                        scene: s.scene.and_then(|scene| scene_of(scene, &sprite)),
-                    })
-                    .collect(),
-            }),
+            cerebro: self.cerebro.map(|cerebro| cerebro_of(cerebro, &sprite)),
             printer: self.printer.map(|printer| printer_of(printer, &sprite)),
             warnings: self
                 .errors
@@ -586,6 +467,145 @@ impl FeedFile {
     }
 }
 
+fn playing_of(
+    item: PlayingModel,
+    picture: &impl Fn(Option<String>) -> Option<PictureRef>,
+) -> Playing {
+    Playing {
+        kind: if item.kind == "episode" {
+            MediaKind::Episode
+        } else {
+            MediaKind::Movie
+        },
+        title: item.title.unwrap_or_default(),
+        series: item.series,
+        season: item.season,
+        episode: item.episode,
+        year: item.year,
+        overview: item.overview,
+        genres: item.genres,
+        runtime: item.runtime,
+        position: item.position,
+        paused: item.paused,
+        device: item.device.unwrap_or_default(),
+        client: item.client.unwrap_or_default(),
+        user: item.user.unwrap_or_default(),
+        poster: picture(item.poster),
+        backdrop: picture(item.backdrop),
+        id: item.id,
+    }
+}
+
+fn house_of(house: HouseModel) -> House {
+    House {
+        outlets: house
+            .outlets
+            .into_iter()
+            .map(|o| Outlet {
+                id: o.id,
+                name: o.name,
+                on: o.on,
+            })
+            .collect(),
+        covers: house
+            .covers
+            .into_iter()
+            .map(|c| Cover {
+                id: c.id,
+                name: c.name,
+                position: c.position.unwrap_or_default(),
+                moving: c
+                    .moving
+                    .is_some_and(|moving| !moving.is_null() && moving != Value::Bool(false)),
+            })
+            .collect(),
+        projectors: house
+            .projectors
+            .into_iter()
+            .map(|p| Projector {
+                id: p.id,
+                name: p.name,
+                on: p.on,
+                app: p.app,
+            })
+            .collect(),
+    }
+}
+
+fn download_of(d: DownloadModel) -> Download {
+    Download {
+        name: d.name,
+        percent: d.percent,
+        eta: d.eta.filter(|eta| *eta >= 0.0),
+    }
+}
+
+/// One Piece needs its latest chapter; the next one is shown when it has a date.
+fn one_piece_of(k: OnePieceModel) -> Option<OnePiece> {
+    let latest = k.latest?;
+    Some(OnePiece {
+        latest: Chapter {
+            number: latest.scan,
+            name: latest.name,
+            arc: latest.arc,
+            pages: latest.pages,
+        },
+        next: k.next.and_then(|n| {
+            Some(NextChapter {
+                number: n.scan,
+                at: parse_time(Some(&n.at))?,
+            })
+        }),
+    })
+}
+
+fn portfolio_of(d: PortfolioModel) -> Portfolio {
+    Portfolio {
+        name: d
+            .name
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| "Portfolio".into()),
+        mode: d.mode,
+        equity: d.equity,
+        initial: d.initial,
+        trades: d.trades,
+        positions: d
+            .positions
+            .into_iter()
+            .map(|p| Position {
+                pair: p.pair,
+                average_price: p.avg,
+                price: p.price,
+            })
+            .collect(),
+    }
+}
+
+fn cerebro_of(
+    cerebro: CerebroModel,
+    sprite: &impl Fn(Option<String>) -> Option<PictureRef>,
+) -> Cerebro {
+    Cerebro {
+        room_size: cerebro.room_size.unwrap_or((192, 120)),
+        character_size: cerebro.character_size.unwrap_or((24, 24)),
+        emotes: sprite(cerebro.emotes),
+        sessions: cerebro
+            .sessions
+            .into_iter()
+            .map(|s| Session {
+                status: status(s.status.as_deref()),
+                since: parse_time(s.since.as_deref()),
+                name: s.name,
+                project: s.project.filter(|project| !project.is_empty()),
+                room: s.room,
+                lead: s.lead,
+                agents: s.agents,
+                scene: s.scene.and_then(|scene| scene_of(scene, sprite)),
+            })
+            .collect(),
+    }
+}
+
 fn import(model: ImportModel, picture: &impl Fn(Option<String>) -> Option<PictureRef>) -> Import {
     Import {
         kind: media(model.media.as_deref()),
@@ -599,84 +619,127 @@ fn import(model: ImportModel, picture: &impl Fn(Option<String>) -> Option<Pictur
     }
 }
 
+/// An event's fields, read by type: a field of another type reads as missing.
+struct Fields<'a>(&'a BTreeMap<String, Value>);
+
+impl Fields<'_> {
+    fn text(&self, key: &str) -> Option<String> {
+        self.0.get(key).and_then(Value::as_str).map(str::to_owned)
+    }
+
+    fn flag(&self, key: &str) -> bool {
+        self.0.get(key).and_then(Value::as_bool).unwrap_or(false)
+    }
+
+    fn number(&self, key: &str) -> Option<u64> {
+        self.0.get(key).and_then(Value::as_u64)
+    }
+}
+
 /// One event of the file; None for a kind this version does not know.
 /// `hub` makes a path on the home page absolute (a print's picture).
 fn event(
     fields: &BTreeMap<String, Value>,
     hub: &impl Fn(Option<String>) -> Option<PictureRef>,
 ) -> Option<Event> {
-    let text = |key: &str| fields.get(key).and_then(Value::as_str).map(str::to_owned);
-    let flag = |key: &str| fields.get(key).and_then(Value::as_bool).unwrap_or(false);
-    let number = |key: &str| fields.get(key).and_then(Value::as_u64);
-    let kind = match text("kind")?.as_str() {
-        "light" => EventKind::Light {
-            name: text("name")?,
-            on: flag("on"),
-        },
-        "cover" => EventKind::Cover {
-            id: text("cover").unwrap_or_default(),
-            name: text("name").unwrap_or_default(),
-            down: match fields.get("moving") {
-                Some(Value::String(direction)) => !direction.contains("up"),
-                _ => fields
-                    .get("target")
-                    .and_then(Value::as_f64)
-                    .is_none_or(|target| target > 0.0),
-            },
-        },
-        "projector" => EventKind::Projector {
-            name: text("name").unwrap_or_default(),
-            on: flag("on"),
-            app: text("app"),
-        },
-        "download" => EventKind::Download {
-            name: text("name").unwrap_or_default(),
-            size: number("size"),
-        },
-        "import" => {
-            let model: ImportModel =
-                serde_json::from_value(Value::Object(fields.clone().into_iter().collect())).ok()?;
-            EventKind::Import(import(model, &|path: Option<String>| {
-                path.map(PictureRef::new)
-            }))
-        }
-        "scan" => EventKind::Scan(Chapter {
-            number: number("scan")? as u32,
-            name: text("name").unwrap_or_default(),
-            arc: text("arc"),
-            pages: number("pages").map(|pages| pages as u32),
-        }),
-        "cerebro" => EventKind::Waiting {
-            name: text("name").unwrap_or_default(),
-            project: text("project"),
-            room: text("room"),
-        },
-        "play" => EventKind::Play {
-            title: text("title").unwrap_or_default(),
-        },
-        "print" => EventKind::Print(PrintNews {
-            phase: match text("phase")?.as_str() {
-                "started" => PrintPhase::Started,
-                "done" => PrintPhase::Done,
-                "cancelled" => PrintPhase::Cancelled,
-                _ => return None,
-            },
-            printer: text("printer").unwrap_or_default(),
-            file: text("file").unwrap_or_default(),
-            image: hub(text("image")),
-            layers: number("layers").map(|layers| layers as u32),
-            remaining: fields.get("remaining").and_then(Value::as_f64),
-            started: parse_time(text("started_at").as_deref()),
-        }),
-        _ => return None,
-    };
+    let fields = Fields(fields);
+    let kind = event_kind(&fields, hub)?;
     // the feed's ids carry their own counter; a missing one would make the event replay forever
-    let id = text("id")?;
+    let id = fields.text("id")?;
     Some(Event {
         id: EventId::new(id),
-        at: parse_time(text("at").as_deref()).unwrap_or_default(),
+        at: parse_time(fields.text("at").as_deref()).unwrap_or_default(),
         kind,
     })
+}
+
+fn event_kind(
+    fields: &Fields,
+    hub: &impl Fn(Option<String>) -> Option<PictureRef>,
+) -> Option<EventKind> {
+    let f = fields;
+    Some(match f.text("kind")?.as_str() {
+        "light" => EventKind::Light {
+            name: f.text("name")?,
+            on: f.flag("on"),
+        },
+        "cover" => EventKind::Cover {
+            id: f.text("cover").unwrap_or_default(),
+            name: f.text("name").unwrap_or_default(),
+            down: cover_goes_down(f.0),
+        },
+        "projector" => EventKind::Projector {
+            name: f.text("name").unwrap_or_default(),
+            on: f.flag("on"),
+            app: f.text("app"),
+        },
+        "download" => EventKind::Download {
+            name: f.text("name").unwrap_or_default(),
+            size: f.number("size"),
+        },
+        "import" => EventKind::Import(import_event(f.0)?),
+        "scan" => EventKind::Scan(Chapter {
+            number: f.number("scan")? as u32,
+            name: f.text("name").unwrap_or_default(),
+            arc: f.text("arc"),
+            pages: f.number("pages").map(|pages| pages as u32),
+        }),
+        "cerebro" => EventKind::Waiting {
+            name: f.text("name").unwrap_or_default(),
+            project: f.text("project"),
+            room: f.text("room"),
+        },
+        "play" => EventKind::Play {
+            title: f.text("title").unwrap_or_default(),
+        },
+        "print" => EventKind::Print(print_news(f, hub)?),
+        _ => return None,
+    })
+}
+
+/// A cover goes down unless it moves up, or, standing still, rests at 0.
+fn cover_goes_down(fields: &BTreeMap<String, Value>) -> bool {
+    match fields.get("moving") {
+        Some(Value::String(direction)) => !direction.contains("up"),
+        _ => fields
+            .get("target")
+            .and_then(Value::as_f64)
+            .is_none_or(|target| target > 0.0),
+    }
+}
+
+/// An import event carries the same fields as the file's recent imports;
+/// its poster is a URL already.
+fn import_event(fields: &BTreeMap<String, Value>) -> Option<Import> {
+    let model: ImportModel =
+        serde_json::from_value(Value::Object(fields.clone().into_iter().collect())).ok()?;
+    Some(import(model, &|path: Option<String>| {
+        path.map(PictureRef::new)
+    }))
+}
+
+fn print_news(
+    f: &Fields,
+    hub: &impl Fn(Option<String>) -> Option<PictureRef>,
+) -> Option<PrintNews> {
+    Some(PrintNews {
+        phase: print_phase(&f.text("phase")?)?,
+        printer: f.text("printer").unwrap_or_default(),
+        file: f.text("file").unwrap_or_default(),
+        image: hub(f.text("image")),
+        layers: f.number("layers").map(|layers| layers as u32),
+        remaining: f.0.get("remaining").and_then(Value::as_f64),
+        started: parse_time(f.text("started_at").as_deref()),
+    })
+}
+
+fn print_phase(phase: &str) -> Option<PrintPhase> {
+    match phase {
+        "started" => Some(PrintPhase::Started),
+        "done" => Some(PrintPhase::Done),
+        "cancelled" => Some(PrintPhase::Cancelled),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
