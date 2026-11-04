@@ -11,10 +11,11 @@ use std::time::{Duration, Instant};
 
 use errol_domain::usecases::{ObserveFeed, View};
 use femtovg::renderer::OpenGl;
-use femtovg::{Canvas, Color};
+use femtovg::{Canvas, Color, FontId};
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
-use sdl2::video::{FullscreenType, GLProfile, Window};
+use sdl2::video::{FullscreenType, GLContext, GLProfile, Window, WindowBuilder};
+use sdl2::{EventPump, Sdl, VideoSubsystem};
 
 use crate::Options;
 use crate::look::Look;
@@ -43,18 +44,9 @@ const MONO_BOLD: [&str; 2] = [
 ];
 
 pub fn run(options: &Options, observe: &ObserveFeed, pictures: &Pictures) -> Result<(), String> {
-    let sdl = sdl2::init()?;
-    let video = sdl.video()?;
-    let window = open_window(&video, options)?;
-    let _context = window.gl_create_context()?;
-    // vsync off: the loop paces itself at `fps`, which costs less than 60 Hz
-    let _ = video.gl_set_swap_interval(0);
-    sdl.mouse().show_cursor(false);
-
-    let renderer = open_gl(&video)?;
-    let mut canvas = Canvas::new(renderer).map_err(|error| format!("femtovg: {error:?}"))?;
-    let fonts = load_fonts(&mut canvas)?;
-    let mut screen = Screen {
+    let mut display = open_display(options)?;
+    let fonts = load_fonts(&mut display.canvas)?;
+    let screen = Screen {
         fonts: &fonts,
         default: options.look,
         look: options.look,
@@ -63,7 +55,56 @@ pub fn run(options: &Options, observe: &ObserveFeed, pictures: &Pictures) -> Res
         stage: Stage::new(options.look),
         textures: Textures::new(pictures),
     };
-    let mut events = sdl.event_pump()?;
+    let events = display.sdl.event_pump()?;
+    frames(options, observe, &mut display, screen, events)
+}
+
+/// SDL, the window and the canvas that draws in it; the canvas goes first.
+struct Display {
+    canvas: Canvas<OpenGl>,
+    _context: GLContext,
+    window: Window,
+    _video: VideoSubsystem,
+    sdl: Sdl,
+}
+
+fn open_display(options: &Options) -> Result<Display, String> {
+    let (sdl, video) = open_video()?;
+    let window = open_window(&video, options)?;
+    let context = window.gl_create_context()?;
+    let canvas = open_canvas(&sdl, &video)?;
+    Ok(Display {
+        canvas,
+        _context: context,
+        window,
+        _video: video,
+        sdl,
+    })
+}
+
+fn open_video() -> Result<(Sdl, VideoSubsystem), String> {
+    let sdl = sdl2::init()?;
+    let video = sdl.video()?;
+    Ok((sdl, video))
+}
+
+/// femtovg on the window's GL context, which must be current.
+fn open_canvas(sdl: &Sdl, video: &VideoSubsystem) -> Result<Canvas<OpenGl>, String> {
+    // vsync off: the loop paces itself at `fps`, which costs less than 60 Hz
+    let _ = video.gl_set_swap_interval(0);
+    sdl.mouse().show_cursor(false);
+    let renderer = open_gl(video)?;
+    Canvas::new(renderer).map_err(|error| format!("femtovg: {error:?}"))
+}
+
+/// The frame loop, paced at `fps`, until the window closes or the shot is taken.
+fn frames(
+    options: &Options,
+    observe: &ObserveFeed,
+    display: &mut Display,
+    mut screen: Screen,
+    mut events: EventPump,
+) -> Result<(), String> {
     let start = Instant::now();
     let frame = Duration::from_secs_f64(1.0 / f64::from(options.fps));
     let mut last = start;
@@ -75,30 +116,33 @@ pub fn run(options: &Options, observe: &ObserveFeed, pictures: &Pictures) -> Res
         let t = start.elapsed().as_secs_f32();
         let dt = tick.duration_since(last).as_secs_f32().min(0.1);
         last = tick;
-        screen.draw(&mut canvas, &window, observe, (t, dt));
-        if let Some(path) = &options.shot
-            && f64::from(t) >= options.shot_after
-        {
-            return save_shot(&mut canvas, path);
+        screen.draw(&mut display.canvas, &display.window, observe, (t, dt));
+        if let Some(path) = shot_due(options, t) {
+            return save_shot(&mut display.canvas, path);
         }
-        window.gl_swap_window();
+        display.window.gl_swap_window();
         if let Some(rest) = frame.checked_sub(tick.elapsed()) {
             std::thread::sleep(rest);
         }
     }
 }
 
+/// Where to save the screen, once `t` seconds have gone by.
+fn shot_due(options: &Options, t: f32) -> Option<&str> {
+    options
+        .shot
+        .as_deref()
+        .filter(|_| f64::from(t) >= options.shot_after)
+}
+
 /// The window: the whole display on the Pi, a window (hidden for a
 /// screenshot) on the Mac.
-fn open_window(video: &sdl2::VideoSubsystem, options: &Options) -> Result<Window, String> {
+fn open_window(video: &VideoSubsystem, options: &Options) -> Result<Window, String> {
     set_gl_attributes(video);
     let mut builder = video.window("Errol", WIDTH as u32, HEIGHT as u32);
     builder.opengl().allow_highdpi();
     if options.windowed {
-        builder.position_centered();
-        if options.shot.is_some() {
-            builder.hidden();
-        }
+        place(&mut builder, options);
     }
     let mut window = builder.build().map_err(|error| error.to_string())?;
     if !options.windowed {
@@ -107,8 +151,16 @@ fn open_window(video: &sdl2::VideoSubsystem, options: &Options) -> Result<Window
     Ok(window)
 }
 
+/// A window in the middle of the screen, out of sight for a screenshot.
+fn place(builder: &mut WindowBuilder, options: &Options) {
+    builder.position_centered();
+    if options.shot.is_some() {
+        builder.hidden();
+    }
+}
+
 /// OpenGL 3.3 core on the Mac, OpenGL ES 3 on the Pi; a stencil for femtovg.
-fn set_gl_attributes(video: &sdl2::VideoSubsystem) {
+fn set_gl_attributes(video: &VideoSubsystem) {
     let attributes = video.gl_attr();
     if cfg!(target_os = "macos") {
         attributes.set_context_profile(GLProfile::Core);
@@ -125,7 +177,7 @@ fn set_gl_attributes(video: &sdl2::VideoSubsystem) {
 /// SDL's KMS backend keeps the mode it enters full screen with: set the
 /// mode first, then go full screen. Built full screen, it kept 640 × 480,
 /// which the 5" screen scales; 800 × 480 is its native size.
-fn fill_display(video: &sdl2::VideoSubsystem, window: &mut Window) -> Result<(), String> {
+fn fill_display(video: &VideoSubsystem, window: &mut Window) -> Result<(), String> {
     let mode = pick_mode(video)?;
     eprintln!(
         "errol: display mode {}x{} @ {} Hz",
@@ -137,38 +189,49 @@ fn fill_display(video: &sdl2::VideoSubsystem, window: &mut Window) -> Result<(),
 
 /// The built-in faces, and the system's monospace (Rajdhani when it has none).
 fn load_fonts(canvas: &mut Canvas<OpenGl>) -> Result<Fonts, String> {
-    let mut font = |data: &[u8]| {
-        canvas
-            .add_font_mem(data)
-            .map_err(|error| format!("font: {error:?}"))
-    };
-    let (medium, semibold) = (font(RAJDHANI_MEDIUM)?, font(RAJDHANI_SEMIBOLD)?);
-    let mut system = |paths: [&str; 2], fallback| {
-        paths
-            .iter()
-            .find_map(|path| canvas.add_font(path).ok())
-            .unwrap_or(fallback)
-    };
-    let (mono, mono_bold) = (system(MONO, medium), system(MONO_BOLD, semibold));
-    let mut font = |data: &[u8]| {
-        canvas
-            .add_font_mem(data)
-            .map_err(|error| format!("font: {error:?}"))
-    };
+    let [medium, semibold] = built_in(canvas, [RAJDHANI_MEDIUM, RAJDHANI_SEMIBOLD])?;
+    let mono = system_font(canvas, MONO, medium);
+    let mono_bold = system_font(canvas, MONO_BOLD, semibold);
+    let [michroma, bold, fell, fell_italic] =
+        built_in(canvas, [MICHROMA, RAJDHANI_BOLD, FELL, FELL_ITALIC])?;
     Ok(Fonts {
-        michroma: font(MICHROMA)?,
+        michroma,
         medium,
         semibold,
-        bold: font(RAJDHANI_BOLD)?,
-        fell: font(FELL)?,
-        fell_italic: font(FELL_ITALIC)?,
+        bold,
+        fell,
+        fell_italic,
         mono,
         mono_bold,
     })
 }
 
+/// Fonts built into the binary, in order.
+fn built_in<const N: usize>(
+    canvas: &mut Canvas<OpenGl>,
+    faces: [&[u8]; N],
+) -> Result<[FontId; N], String> {
+    let ids = faces
+        .iter()
+        .map(|data| {
+            canvas
+                .add_font_mem(data)
+                .map_err(|error| format!("font: {error:?}"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(std::array::from_fn(|index| ids[index]))
+}
+
+/// The first of `paths` the system has, else `fallback`.
+fn system_font(canvas: &mut Canvas<OpenGl>, paths: [&str; 2], fallback: FontId) -> FontId {
+    paths
+        .iter()
+        .find_map(|path| canvas.add_font(path).ok())
+        .unwrap_or(fallback)
+}
+
 /// Escape, Q or the window closed.
-fn quit_asked(events: &mut sdl2::EventPump) -> bool {
+fn quit_asked(events: &mut EventPump) -> bool {
     events.poll_iter().any(|event| {
         matches!(
             event,
@@ -276,7 +339,7 @@ fn fit(width: f32, height: f32) -> (f32, f32, f32) {
 }
 
 /// The display's 800 × 480 mode (the stage's size), else its largest one.
-fn pick_mode(video: &sdl2::VideoSubsystem) -> Result<sdl2::video::DisplayMode, String> {
+fn pick_mode(video: &VideoSubsystem) -> Result<sdl2::video::DisplayMode, String> {
     let count = video.num_display_modes(0)?;
     let modes: Vec<_> = (0..count)
         .filter_map(|index| video.display_mode(0, index).ok())
@@ -299,7 +362,7 @@ fn pick_mode(video: &sdl2::VideoSubsystem) -> Result<sdl2::video::DisplayMode, S
 
 /// The GL functions come from SDL; only unsafe code can hand them to femtovg.
 #[allow(unsafe_code)]
-fn open_gl(video: &sdl2::VideoSubsystem) -> Result<OpenGl, String> {
+fn open_gl(video: &VideoSubsystem) -> Result<OpenGl, String> {
     // SAFETY: the GL context was just created on this thread and is current;
     // SDL returns valid function pointers for it.
     unsafe { OpenGl::new_from_function(|name| video.gl_get_proc_address(name).cast()) }
@@ -323,6 +386,25 @@ fn save_shot(canvas: &mut Canvas<OpenGl>, path: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn options(shot: Option<&str>) -> Options {
+        let mut options = Options::from_env_and_args(std::iter::empty()).unwrap();
+        options.shot = shot.map(str::to_owned);
+        options.shot_after = 6.0;
+        options
+    }
+
+    #[test]
+    fn the_shot_is_taken_once_its_time_has_come() {
+        let options = options(Some("x.png"));
+        assert_eq!(shot_due(&options, 5.9), None);
+        assert_eq!(shot_due(&options, 6.0), Some("x.png"));
+    }
+
+    #[test]
+    fn without_a_shot_the_screen_goes_on() {
+        assert_eq!(shot_due(&options(None), 60.0), None);
+    }
 
     #[test]
     fn the_stage_fills_a_screen_of_its_size() {
