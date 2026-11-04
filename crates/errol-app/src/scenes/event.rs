@@ -8,13 +8,15 @@
 
 use std::f32::consts::TAU;
 
-use errol_domain::entities::{Event, EventKind, PrintNews, PrintPhase};
+use errol_domain::entities::{
+    Cerebro, Chapter, Event, EventKind, Import, PrintNews, PrintPhase, Session, Snapshot,
+};
 use errol_domain::usecases::View;
 use femtovg::{Color, Paint, Path};
 
 use super::{BOTTOM, TOP, printer, text, xmansion};
 use crate::anim::{decode, ease_back, ease_out, progress};
-use crate::look::{fade, rgb};
+use crate::look::{Look, Palette, fade, rgb};
 use crate::render::{Anchor, Face, Finish, Gfx, Textures, Type, ink};
 
 const CX: f32 = 176.0;
@@ -24,6 +26,21 @@ const TEXT_W: f32 = 420.0;
 /// The notice pinned to the Map: x, y, w, h.
 const NOTICE: (f32, f32, f32, f32) = (30.0, TOP + 14.0, 740.0, BOTTOM - TOP - 40.0);
 
+/// What an event says: (kicker, title, subtitle, tags).
+type Words = (String, String, String, Vec<String>);
+
+/// How the words of an event are written in a look.
+#[derive(Debug, Clone, Copy)]
+struct Lettering {
+    kicker: Color,
+    title: Type,
+    title_colour: Color,
+    /// Cyberpunk shouts its titles in capitals.
+    capitals: bool,
+    /// How wide the words run.
+    width: f32,
+}
+
 pub fn draw(
     gfx: &mut Gfx,
     view: &View,
@@ -32,343 +49,428 @@ pub fn draw(
     length: f32,
     textures: &mut Textures,
 ) {
-    let palette = gfx.palette;
-    let (nx, ny, nw, nh) = NOTICE;
     if gfx.hogwarts() {
-        gfx.pinned(nx, ny, nw, nh, -0.35);
-        gfx.double_rule(
-            nx + 8.0,
-            ny + 8.0,
-            nw - 16.0,
-            nh - 16.0,
-            fade(ink::news_ink(), 0.8),
-        );
+        notice(gfx);
     }
-    let text_w = if gfx.hogwarts() { 390.0 } else { TEXT_W };
     // the picture pops in, overshooting a little
     let pop = 0.4 + 0.6 * ease_back(progress(age, 0.9));
     gfx.canvas.save();
     gfx.canvas.translate(CX, CY);
     gfx.canvas.scale(pop, pop);
     gfx.canvas.translate(-CX, -CY);
-    let (kicker, title, sub, tags) = visual(gfx, view, event, age, textures);
+    picture(gfx, view, event, age, textures);
     gfx.canvas.restore();
+    draw_words(gfx, event, words(event), age);
+    timer(gfx, age, length);
+}
 
-    // the words slide in one after the other
-    let slide = |delay: f32| 30.0 * (1.0 - ease_out(progress(age - delay, 0.7)));
+/// The Gazette's notice pinned over the Map, in a double rule.
+fn notice(gfx: &mut Gfx) {
+    let (nx, ny, nw, nh) = NOTICE;
+    gfx.pinned(nx, ny, nw, nh, -0.35);
+    gfx.double_rule(
+        nx + 8.0,
+        ny + 8.0,
+        nw - 16.0,
+        nh - 16.0,
+        fade(ink::news_ink(), 0.8),
+    );
+}
+
+/// How far right a word still is, `delay` seconds after the scene came: the
+/// words slide in one after the other.
+fn slide(age: f32, delay: f32) -> f32 {
+    30.0 * (1.0 - ease_out(progress(age - delay, 0.7)))
+}
+
+fn lettering(look: Look, palette: &Palette) -> Lettering {
+    match look {
+        Look::Cyberpunk => Lettering {
+            kicker: palette.accent2,
+            title: Type::new(Face::Bold, 38.0),
+            title_colour: palette.hot,
+            capitals: true,
+            width: TEXT_W,
+        },
+        Look::Hogwarts => Lettering {
+            kicker: palette.accent,
+            title: Type::new(Face::Display, 28.0),
+            title_colour: palette.accent,
+            capitals: false,
+            width: 390.0,
+        },
+        Look::Friday => Lettering {
+            kicker: palette.accent,
+            title: Type::new(Face::Display, 28.0),
+            title_colour: palette.text,
+            capitals: false,
+            width: TEXT_W,
+        },
+    }
+}
+
+/// The height of the words: the kicker, the title's lines, the subtitle when
+/// there is one, the tags.
+fn block_height(lines: usize, line_height: f32, has_sub: bool) -> f32 {
+    26.0 + lines as f32 * line_height + 8.0 + if has_sub { 30.0 } else { 0.0 } + 36.0
+}
+
+/// The words on the right, centred on the picture: kicker, title, subtitle, tags.
+fn draw_words(gfx: &mut Gfx, event: &Event, words: Words, age: f32) {
+    let (kicker, title, sub, tags) = words;
     let glyphs = gfx.glyphs();
-    let kicker_colour = if gfx.cyber() {
-        palette.accent2
-    } else {
-        palette.accent
-    };
-    let title_style = if gfx.cyber() {
-        Type::new(Face::Bold, 38.0)
-    } else {
-        Type::new(Face::Display, 28.0)
-    };
-    let title = if gfx.cyber() {
-        title.to_uppercase()
-    } else {
-        title
-    };
-    let lines = gfx.wrap(&title, text_w, title_style, 3);
-    let line_height = title_style.size * 1.22;
-    let block = 26.0
-        + lines.len() as f32 * line_height
-        + 8.0
-        + if sub.is_empty() { 0.0 } else { 30.0 }
-        + 36.0;
-    let mut y = CY - block / 2.0;
-    gfx.kicker(TEXT_X + slide(0.0), y, &kicker, kicker_colour);
+    let lettering = lettering(gfx.look, &gfx.palette);
+    let title = cased(title, lettering.capitals);
+    let lines = gfx.wrap(&title, lettering.width, lettering.title, 3);
+    let line_height = lettering.title.size * 1.22;
+    let mut y = CY - block_height(lines.len(), line_height, !sub.is_empty()) / 2.0;
+    gfx.kicker(TEXT_X + slide(age, 0.0), y, &kicker, lettering.kicker);
     y += 26.0;
     for (index, line) in lines.iter().enumerate() {
         let shown = decode(line, age - 0.15, 1.1, glyphs);
-        let colour = if gfx.cyber() {
-            palette.hot
-        } else if gfx.hogwarts() {
-            palette.accent
-        } else {
-            palette.text
-        };
         gfx.title(
-            TEXT_X + slide(0.15),
+            TEXT_X + slide(age, 0.15),
             y + index as f32 * line_height,
             &shown,
-            title_style,
-            colour,
+            lettering.title,
+            lettering.title_colour,
             Anchor::TOP_LEFT,
         );
     }
     y += lines.len() as f32 * line_height + 8.0;
     if !sub.is_empty() {
         gfx.text(
-            TEXT_X + slide(0.3),
+            TEXT_X + slide(age, 0.3),
             y,
             &sub,
             Type::new(Face::Italic, 20.0),
-            palette.muted,
+            gfx.palette.muted,
             Anchor::TOP_LEFT,
         );
         y += 30.0;
     }
-    let mut x = TEXT_X + slide(0.45);
+    let mut x = TEXT_X + slide(age, 0.45);
     for tag in tags.iter().chain(std::iter::once(&text::clock(event.at))) {
         x += gfx.tag(x, y + 6.0, tag) + 8.0;
     }
+}
 
-    // the time left to this scene
-    let left = 1.0 - progress(age, length);
-    let (bx, by, bw) = if gfx.hogwarts() {
+/// The title as the look writes it.
+fn cased(title: String, capitals: bool) -> String {
+    if capitals {
+        title.to_uppercase()
+    } else {
+        title
+    }
+}
+
+/// Where the bar of the time left runs: under the notice on the Map, along
+/// the bottom elsewhere.
+fn timer_box(hogwarts: bool) -> (f32, f32, f32) {
+    let (nx, ny, nw, nh) = NOTICE;
+    if hogwarts {
         (nx + 30.0, ny + nh - 18.0, nw - 60.0)
     } else {
         (26.0, BOTTOM - 10.0, 748.0)
-    };
-    gfx.rect(bx, by, bw, 2.0, fade(palette.accent, 0.1));
-    gfx.rect(bx, by, bw * left, 2.0, palette.accent);
+    }
 }
 
-/// Draws the picture of the event; returns (kicker, title, subtitle, tags).
-fn visual(
-    gfx: &mut Gfx,
-    view: &View,
-    event: &Event,
-    age: f32,
-    textures: &mut Textures,
-) -> (String, String, String, Vec<String>) {
+/// The time left to this scene, draining.
+fn timer(gfx: &mut Gfx, age: f32, length: f32) {
+    let left = 1.0 - progress(age, length);
+    let (bx, by, bw) = timer_box(gfx.hogwarts());
+    gfx.rect(bx, by, bw, 2.0, fade(gfx.palette.accent, 0.1));
+    gfx.rect(bx, by, bw * left, 2.0, gfx.palette.accent);
+}
+
+/// Draws the picture of the event.
+fn picture(gfx: &mut Gfx, view: &View, event: &Event, age: f32, textures: &mut Textures) {
     match &event.kind {
-        EventKind::Light { name, on } => {
+        EventKind::Light { .. } | EventKind::Cover { .. } | EventKind::Projector { .. } => {
+            house_picture(gfx, view, &event.kind, age);
+        }
+        EventKind::Waiting { name, .. } => waiting_picture(gfx, view, name, age, textures),
+        EventKind::Print(news) => print(gfx, news, age, textures),
+        kind => media_picture(gfx, kind, age, textures),
+    }
+}
+
+/// A lamp, the projection screen, the projector's beam.
+fn house_picture(gfx: &mut Gfx, view: &View, kind: &EventKind, age: f32) {
+    match kind {
+        EventKind::Light { on, .. } => {
             halos(gfx, age);
             bulb(gfx, *on);
-            (
-                "Maison · éclairage".into(),
-                name.clone(),
-                if *on {
-                    "vient de s'allumer".into()
-                } else {
-                    "vient de s'éteindre".into()
-                },
-                vec![],
-            )
         }
-        EventKind::Cover { id, name, down } => {
-            let cover = view
-                .snapshot
-                .as_ref()
-                .and_then(|s| s.house.as_ref())
-                .and_then(|house| {
-                    house
-                        .covers
-                        .iter()
-                        .find(|c| &c.id == id)
-                        .or(house.covers.first())
-                });
-            let (position, moving) = cover.map_or((0.0, false), |c| (c.position as f32, c.moving));
+        EventKind::Cover { id, .. } => {
+            let (position, moving) = cover_state(view.snapshot.as_deref(), id);
             projection_screen(gfx, position, moving);
-            let sub = if *down {
-                "descend · séance imminente"
-            } else {
-                "remonte · fin de séance"
-            };
-            (
-                "Salle de projection".into(),
-                name.clone(),
-                sub.into(),
-                vec![],
-            )
         }
-        EventKind::Projector { name, on, app } => {
-            projector(gfx, *on, app.as_deref(), age);
-            let title = format!("{name} {}", if *on { "allumé" } else { "éteint" });
-            let sub = match (on, app) {
-                (true, Some(app)) => format!("sur {app}"),
-                (true, None) => String::new(),
-                (false, _) => "la salle se rallume".into(),
-            };
-            ("Salle de projection".into(), title, sub, vec![])
-        }
-        EventKind::Download { name, size } => {
+        EventKind::Projector { on, app, .. } => projector(gfx, *on, app.as_deref(), age),
+        _ => {}
+    }
+}
+
+/// Where the screen of the event is and whether it moves: the cover with that
+/// id, else the first one, else rolled up and still.
+fn cover_state(snapshot: Option<&Snapshot>, id: &str) -> (f32, bool) {
+    let cover = snapshot.and_then(|s| s.house.as_ref()).and_then(|house| {
+        house
+            .covers
+            .iter()
+            .find(|c| c.id == id)
+            .or(house.covers.first())
+    });
+    cover.map_or((0.0, false), |c| (c.position as f32, c.moving))
+}
+
+/// A check for a download, a poster for an import, the chapter's number for
+/// a scan; nothing for a play (the cinema shows it).
+fn media_picture(gfx: &mut Gfx, kind: &EventKind, age: f32, textures: &mut Textures) {
+    match kind {
+        EventKind::Download { .. } => {
             halos(gfx, age);
             check(gfx, age);
-            (
-                "Téléchargement terminé".into(),
-                text::release(name),
-                String::new(),
-                size.map(text::size).into_iter().collect(),
-            )
         }
-        EventKind::Import(import) => {
-            let finish = if gfx.hogwarts() {
-                Finish::Print
-            } else {
-                Finish::Plain
-            };
-            if let Some(image) = import
-                .poster
-                .as_ref()
-                .and_then(|poster| textures.get(gfx.canvas, poster, 400, finish))
-            {
-                poster(gfx, image, CX - 100.0, CY - 150.0, 200.0, 300.0, age);
-            } else {
-                halos(gfx, age);
-                check(gfx, age);
-            }
-            let episode = import.season.is_some();
-            let kicker = if episode {
-                "Nouvel épisode dans la bibliothèque"
-            } else {
-                "Nouveau film dans la bibliothèque"
-            };
-            let sub = if episode {
-                let title = import
-                    .episode_title
-                    .as_deref()
-                    .map(|t| format!(" — {t}"))
-                    .unwrap_or_default();
-                format!(
-                    "Saison {} · épisode {}{title}",
-                    import.season.unwrap_or_default(),
-                    import.episode.unwrap_or_default()
-                )
-            } else {
-                import.year.map(|year| year.to_string()).unwrap_or_default()
-            };
-            (
-                kicker.into(),
-                import.title.clone(),
-                sub,
-                import.quality.iter().cloned().collect(),
-            )
-        }
+        EventKind::Import(import) => import_picture(gfx, import, age, textures),
         EventKind::Scan(chapter) => {
             halos(gfx, age);
-            let number = chapter.number.to_string();
-            if gfx.cyber() {
-                gfx.split_text(
-                    CX,
-                    CY,
-                    &number,
-                    Type::new(Face::Bold, 118.0),
-                    gfx.palette.hot,
-                    Anchor::MIDDLE_CENTER,
-                    1.0,
-                );
-            } else if gfx.hogwarts() {
-                // the number in red ink, as the Gazette prints its headlines
-                gfx.text(
-                    CX,
-                    CY,
-                    &number,
-                    Type::new(Face::Display, 84.0),
-                    gfx.palette.accent2,
-                    Anchor::MIDDLE_CENTER,
-                );
-            } else {
-                let colour = gfx.palette.accent2;
-                gfx.halo(CX, CY, 150.0, fade(colour, 0.18));
-                gfx.glow_text(
-                    CX,
-                    CY,
-                    &number,
-                    Type::new(Face::Display, 78.0),
-                    colour,
-                    Anchor::MIDDLE_CENTER,
-                    2.5,
-                );
-            }
-            let tags = chapter
-                .pages
-                .map(|pages| format!("{pages} pages"))
-                .into_iter()
-                .collect();
-            (
-                "One Piece · nouveau scan".into(),
-                chapter.name.clone(),
-                chapter
-                    .arc
-                    .as_deref()
-                    .map(|arc| format!("arc {arc}"))
-                    .unwrap_or_default(),
-                tags,
-            )
+            chapter_number(gfx, &chapter.number.to_string());
         }
+        _ => {}
+    }
+}
+
+/// The poster of what entered the library, or a check while it loads.
+fn import_picture(gfx: &mut Gfx, import: &Import, age: f32, textures: &mut Textures) {
+    let finish = if gfx.hogwarts() {
+        Finish::Print
+    } else {
+        Finish::Plain
+    };
+    if let Some(image) = import
+        .poster
+        .as_ref()
+        .and_then(|poster| textures.get(gfx.canvas, poster, 400, finish))
+    {
+        poster(gfx, image, CX - 100.0, CY - 150.0, 200.0, 300.0, age);
+    } else {
+        halos(gfx, age);
+        check(gfx, age);
+    }
+}
+
+/// The chapter's number, big: split in cyberpunk, in red ink as the Gazette
+/// prints its headlines, glowing in friday.
+fn chapter_number(gfx: &mut Gfx, number: &str) {
+    if gfx.cyber() {
+        gfx.split_text(
+            CX,
+            CY,
+            number,
+            Type::new(Face::Bold, 118.0),
+            gfx.palette.hot,
+            Anchor::MIDDLE_CENTER,
+            1.0,
+        );
+    } else if gfx.hogwarts() {
+        gfx.text(
+            CX,
+            CY,
+            number,
+            Type::new(Face::Display, 84.0),
+            gfx.palette.accent2,
+            Anchor::MIDDLE_CENTER,
+        );
+    } else {
+        let colour = gfx.palette.accent2;
+        gfx.halo(CX, CY, 150.0, fade(colour, 0.18));
+        gfx.glow_text(
+            CX,
+            CY,
+            number,
+            Type::new(Face::Display, 78.0),
+            colour,
+            Anchor::MIDDLE_CENTER,
+            2.5,
+        );
+    }
+}
+
+/// The session that waits, when Cerebro drew it.
+fn waiting_session<'a>(
+    snapshot: Option<&'a Snapshot>,
+    name: &str,
+) -> Option<(&'a Cerebro, &'a Session)> {
+    let cerebro = snapshot.and_then(|s| s.cerebro.as_ref())?;
+    cerebro
+        .sessions
+        .iter()
+        .find(|session| session.name == name && session.scene.is_some())
+        .map(|session| (cerebro, session))
+}
+
+/// The session's card as Cerebro shows it, its lead's "!" blinking; a
+/// question mark when Cerebro has no picture of it.
+fn waiting_picture(gfx: &mut Gfx, view: &View, name: &str, age: f32, textures: &mut Textures) {
+    let Some((cerebro, session)) = waiting_session(view.snapshot.as_deref(), name) else {
+        halos(gfx, age);
+        question(gfx);
+        return;
+    };
+    let scale = 1.4;
+    let (w, h) = (
+        xmansion::card_width(cerebro, scale),
+        xmansion::card_height(cerebro, scale),
+    );
+    xmansion::draw_card(
+        gfx,
+        textures,
+        cerebro,
+        session,
+        CX - w / 2.0,
+        CY - h / 2.0,
+        scale,
+        view.now.0,
+    );
+}
+
+/// What the event says: (kicker, title, subtitle, tags).
+fn words(event: &Event) -> Words {
+    match &event.kind {
+        EventKind::Light { name, on } => light_words(name, *on),
+        EventKind::Cover { name, down, .. } => cover_words(name, *down),
+        EventKind::Projector { name, on, app } => projector_words(name, *on, app.as_deref()),
+        EventKind::Download { name, size } => (
+            "Téléchargement terminé".into(),
+            text::release(name),
+            String::new(),
+            size.map(text::size).into_iter().collect(),
+        ),
+        EventKind::Import(import) => import_words(import),
+        EventKind::Scan(chapter) => scan_words(chapter),
         EventKind::Waiting {
             name,
             project,
             room,
-        } => {
-            // the session's card as Cerebro shows it, its lead's "!" blinking
-            let cerebro = view.snapshot.as_ref().and_then(|s| s.cerebro.as_ref());
-            let session = cerebro.and_then(|cerebro| {
-                cerebro
-                    .sessions
-                    .iter()
-                    .find(|session| &session.name == name && session.scene.is_some())
-                    .map(|session| (cerebro, session))
-            });
-            if let Some((cerebro, session)) = session {
-                let scale = 1.4;
-                let (w, h) = (
-                    xmansion::card_width(cerebro, scale),
-                    xmansion::card_height(cerebro, scale),
-                );
-                xmansion::draw_card(
-                    gfx,
-                    textures,
-                    cerebro,
-                    session,
-                    CX - w / 2.0,
-                    CY - h / 2.0,
-                    scale,
-                    view.now.0,
-                );
-            } else {
-                halos(gfx, age);
-                question(gfx);
-            }
-            let sub = match project {
-                Some(project) => format!("attend ta réponse · {project}"),
-                None => "attend ta réponse".into(),
-            };
-            (
-                "Claude Code · Cerebro".into(),
-                name.clone(),
-                sub,
-                room.iter().cloned().collect(),
-            )
-        }
+        } => waiting_words(name, project.as_deref(), room.as_deref()),
         EventKind::Play { title } => ("Lecture".into(), title.clone(), String::new(), vec![]),
-        EventKind::Print(news) => print(gfx, event, news, age, textures),
+        EventKind::Print(news) => print_words(event, news),
     }
+}
+
+fn light_words(name: &str, on: bool) -> Words {
+    let sub = if on {
+        "vient de s'allumer"
+    } else {
+        "vient de s'éteindre"
+    };
+    ("Maison · éclairage".into(), name.into(), sub.into(), vec![])
+}
+
+fn cover_words(name: &str, down: bool) -> Words {
+    let sub = if down {
+        "descend · séance imminente"
+    } else {
+        "remonte · fin de séance"
+    };
+    (
+        "Salle de projection".into(),
+        name.into(),
+        sub.into(),
+        vec![],
+    )
+}
+
+fn projector_words(name: &str, on: bool, app: Option<&str>) -> Words {
+    let title = format!("{name} {}", if on { "allumé" } else { "éteint" });
+    let sub = match (on, app) {
+        (true, Some(app)) => format!("sur {app}"),
+        (true, None) => String::new(),
+        (false, _) => "la salle se rallume".into(),
+    };
+    ("Salle de projection".into(), title, sub, vec![])
+}
+
+fn import_words(import: &Import) -> Words {
+    let episode = import.season.is_some();
+    let kicker = if episode {
+        "Nouvel épisode dans la bibliothèque"
+    } else {
+        "Nouveau film dans la bibliothèque"
+    };
+    let sub = if episode {
+        let title = import
+            .episode_title
+            .as_deref()
+            .map(|t| format!(" — {t}"))
+            .unwrap_or_default();
+        format!(
+            "Saison {} · épisode {}{title}",
+            import.season.unwrap_or_default(),
+            import.episode.unwrap_or_default()
+        )
+    } else {
+        import.year.map(|year| year.to_string()).unwrap_or_default()
+    };
+    (
+        kicker.into(),
+        import.title.clone(),
+        sub,
+        import.quality.iter().cloned().collect(),
+    )
+}
+
+fn scan_words(chapter: &Chapter) -> Words {
+    (
+        "One Piece · nouveau scan".into(),
+        chapter.name.clone(),
+        chapter
+            .arc
+            .as_deref()
+            .map(|arc| format!("arc {arc}"))
+            .unwrap_or_default(),
+        chapter
+            .pages
+            .map(|pages| format!("{pages} pages"))
+            .into_iter()
+            .collect(),
+    )
+}
+
+fn waiting_words(name: &str, project: Option<&str>, room: Option<&str>) -> Words {
+    let sub = match project {
+        Some(project) => format!("attend ta réponse · {project}"),
+        None => "attend ta réponse".into(),
+    };
+    (
+        "Claude Code · Cerebro".into(),
+        name.into(),
+        sub,
+        room.map(str::to_owned).into_iter().collect(),
+    )
 }
 
 /// A print that started, finished or was cancelled: the slicer's picture, or
 /// the vat filling (started), a check (done), a cross (cancelled).
-fn print(
-    gfx: &mut Gfx,
-    event: &Event,
-    news: &PrintNews,
-    age: f32,
-    textures: &mut Textures,
-) -> (String, String, String, Vec<String>) {
+fn print(gfx: &mut Gfx, news: &PrintNews, age: f32, textures: &mut Textures) {
     let image = news
         .image
         .as_ref()
         .and_then(|image| printer::load(gfx, image, textures));
     if let Some(image) = image {
         print_picture(gfx, image, age);
-    } else {
-        halos(gfx, age);
-        match news.phase {
-            PrintPhase::Started => {
-                let rising = f64::from(ease_out(progress(age - 0.3, 4.0)));
-                printer::vat(gfx, CX, CY, 1.5, 100.0 * rising);
-            }
-            PrintPhase::Done => check(gfx, age),
-            PrintPhase::Cancelled => cross(gfx, age),
-        }
+        return;
     }
-    print_words(event, news)
+    halos(gfx, age);
+    match news.phase {
+        PrintPhase::Started => {
+            let rising = f64::from(ease_out(progress(age - 0.3, 4.0)));
+            printer::vat(gfx, CX, CY, 1.5, 100.0 * rising);
+        }
+        PrintPhase::Done => check(gfx, age),
+        PrintPhase::Cancelled => cross(gfx, age),
+    }
 }
 
 /// The slicer's picture, in the look's frame.
@@ -390,7 +492,7 @@ fn print_picture(gfx: &mut Gfx, image: femtovg::ImageId, age: f32) {
 }
 
 /// What a print event says: (kicker, title, subtitle, tags).
-fn print_words(event: &Event, news: &PrintNews) -> (String, String, String, Vec<String>) {
+fn print_words(event: &Event, news: &PrintNews) -> Words {
     // how long it took, from its start to the event
     let took = news
         .started
@@ -830,5 +932,192 @@ mod tests {
         let (event, mut started) = news(PrintPhase::Started);
         started.remaining = None;
         assert_eq!(print_words(&event, &started).2, "");
+    }
+
+    fn kind(kind: EventKind) -> Event {
+        Event {
+            id: EventId::new("e"),
+            at: Timestamp::from_secs(0),
+            kind,
+        }
+    }
+
+    fn said(event_kind: EventKind) -> Words {
+        words(&kind(event_kind))
+    }
+
+    #[test]
+    fn the_house_says_what_moved() {
+        let light = |on| {
+            said(EventKind::Light {
+                name: "Lampe".into(),
+                on,
+            })
+        };
+        assert_eq!(light(true).2, "vient de s'allumer");
+        assert_eq!(light(false).2, "vient de s'éteindre");
+        let cover = |down| {
+            said(EventKind::Cover {
+                id: "screen".into(),
+                name: "Écran".into(),
+                down,
+            })
+        };
+        assert_eq!(cover(true).2, "descend · séance imminente");
+        assert_eq!(cover(false).0, "Salle de projection");
+        assert_eq!(cover(false).2, "remonte · fin de séance");
+        let projector = |on, app: Option<&str>| {
+            said(EventKind::Projector {
+                name: "Projecteur".into(),
+                on,
+                app: app.map(Into::into),
+            })
+        };
+        assert_eq!(projector(true, Some("Jellyfin")).1, "Projecteur allumé");
+        assert_eq!(projector(true, Some("Jellyfin")).2, "sur Jellyfin");
+        assert_eq!(projector(true, None).2, "");
+        assert_eq!(projector(false, None).1, "Projecteur éteint");
+        assert_eq!(projector(false, None).2, "la salle se rallume");
+    }
+
+    #[test]
+    fn the_media_say_what_came() {
+        let download = said(EventKind::Download {
+            name: "Dune.Part.Two".into(),
+            size: Some(6_400_000_000),
+        });
+        assert_eq!(download.0, "Téléchargement terminé");
+        assert_eq!(download.1, "Dune Part Two");
+        assert_eq!(download.3.len(), 1);
+        let mut import = Import {
+            kind: errol_domain::entities::MediaKind::Episode,
+            title: "Arcane".into(),
+            year: Some(2024),
+            season: Some(2),
+            episode: Some(4),
+            episode_title: Some("Paris".into()),
+            quality: Some("WEBDL-1080p".into()),
+            poster: None,
+        };
+        let episode = said(EventKind::Import(import.clone()));
+        assert_eq!(episode.0, "Nouvel épisode dans la bibliothèque");
+        assert_eq!(episode.2, "Saison 2 · épisode 4 — Paris");
+        assert_eq!(episode.3, ["WEBDL-1080p"]);
+        import.season = None;
+        let film = said(EventKind::Import(import));
+        assert_eq!(film.0, "Nouveau film dans la bibliothèque");
+        assert_eq!(film.2, "2024");
+        let scan = said(EventKind::Scan(Chapter {
+            number: 1197,
+            name: "Loki".into(),
+            arc: Some("Elbaf".into()),
+            pages: Some(17),
+        }));
+        assert_eq!(
+            scan,
+            (
+                "One Piece · nouveau scan".to_owned(),
+                "Loki".to_owned(),
+                "arc Elbaf".to_owned(),
+                vec!["17 pages".to_owned()]
+            )
+        );
+        let play = said(EventKind::Play {
+            title: "Dune".into(),
+        });
+        assert_eq!((play.0.as_str(), play.1.as_str()), ("Lecture", "Dune"));
+    }
+
+    #[test]
+    fn a_waiting_session_names_its_project_and_room() {
+        let waiting = |project: Option<&str>| {
+            said(EventKind::Waiting {
+                name: "errol-8b".into(),
+                project: project.map(Into::into),
+                room: Some("Danger Room".into()),
+            })
+        };
+        assert_eq!(waiting(Some("~/errol")).2, "attend ta réponse · ~/errol");
+        assert_eq!(waiting(None).2, "attend ta réponse");
+        assert_eq!(waiting(None).3, ["Danger Room"]);
+        let (event, news) = news(PrintPhase::Done);
+        assert_eq!(words(&event), print_words(&event, &news));
+    }
+
+    #[test]
+    fn the_screen_of_the_event_is_found_or_the_first() {
+        use errol_domain::entities::{Cover, House};
+        let cover = |id: &str, position| Cover {
+            id: id.into(),
+            name: id.into(),
+            position,
+            moving: true,
+        };
+        let snapshot = Snapshot {
+            house: Some(House {
+                outlets: Vec::new(),
+                covers: vec![cover("a", 30.0), cover("b", 100.0)],
+                projectors: Vec::new(),
+            }),
+            ..Snapshot::default()
+        };
+        assert_eq!(cover_state(Some(&snapshot), "b"), (100.0, true));
+        assert_eq!(cover_state(Some(&snapshot), "z"), (30.0, true));
+        assert_eq!(cover_state(None, "b"), (0.0, false));
+    }
+
+    #[test]
+    fn a_session_shows_only_when_cerebro_drew_it() {
+        use errol_domain::entities::{PictureRef, SessionScene, SessionStatus};
+        let session = |name: &str, drawn: bool| Session {
+            name: name.into(),
+            project: None,
+            status: SessionStatus::Waiting,
+            since: None,
+            room: None,
+            lead: None,
+            agents: 0,
+            scene: drawn.then(|| SessionScene {
+                room: PictureRef::new("/room.png"),
+                frames: 1,
+                fps: 1,
+                walk: (0, 0, 1, 1),
+                actors: Vec::new(),
+            }),
+        };
+        let snapshot = Snapshot {
+            cerebro: Some(Cerebro {
+                sessions: vec![session("plain", false), session("drawn", true)],
+                room_size: (192, 120),
+                character_size: (24, 24),
+                emotes: None,
+            }),
+            ..Snapshot::default()
+        };
+        assert!(waiting_session(Some(&snapshot), "drawn").is_some());
+        assert!(waiting_session(Some(&snapshot), "plain").is_none());
+        assert!(waiting_session(None, "drawn").is_none());
+    }
+
+    #[test]
+    fn the_words_are_laid_out_per_look() {
+        let palette = Look::Cyberpunk.palette();
+        let cyber = lettering(Look::Cyberpunk, &palette);
+        assert!(cyber.capitals);
+        assert_eq!(cyber.title_colour, palette.hot);
+        let hogwarts = lettering(Look::Hogwarts, &palette);
+        assert_eq!(hogwarts.title_colour, palette.accent);
+        assert!((hogwarts.width - 390.0).abs() < f32::EPSILON);
+        let friday = lettering(Look::Friday, &palette);
+        assert!(!friday.capitals);
+        assert_eq!(friday.title_colour, palette.text);
+        assert_eq!(cased("Dune".into(), true), "DUNE");
+        assert_eq!(cased("Dune".into(), false), "Dune");
+        assert!((block_height(2, 10.0, true) - 120.0).abs() < 1e-4);
+        assert!((block_height(1, 10.0, false) - 80.0).abs() < 1e-4);
+        assert!((slide(10.0, 0.0)).abs() < 1e-4);
+        assert!((slide(0.0, 0.3) - 30.0).abs() < 1e-4);
+        assert_eq!(timer_box(false), (26.0, BOTTOM - 10.0, 748.0));
+        assert!((timer_box(true).2 - 680.0).abs() < 1e-4);
     }
 }
