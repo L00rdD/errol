@@ -70,16 +70,22 @@ fn should_ask(heard_ago: Duration, following: bool) -> bool {
 /// Follows the stream on its own thread until it ends; a stream that hangs
 /// (a cable pulled) stays quiet, and the poller takes over after `STALE`.
 fn follow(observe: Arc<ObserveFeed>, heard: Arc<Mutex<Instant>>, following: Arc<AtomicBool>) {
-    let spawned = thread::Builder::new().name("stream".into()).spawn(move || {
-        let ended = observe.follow(&mut || mark(&following, &heard));
-        if following.swap(false, Ordering::Relaxed)
-            && let Err(error) = ended
-        {
-            eprintln!("errol: stream: {error}");
-        }
-    });
+    let spawned = thread::Builder::new()
+        .name("stream".into())
+        .spawn(move || stream(&observe, &heard, &following));
     if let Err(error) = spawned {
         eprintln!("errol: no stream thread: {error}");
+    }
+}
+
+/// The stream's thread: takes what it says until it ends, then says why
+/// if it was followed.
+fn stream(observe: &ObserveFeed, heard: &Mutex<Instant>, following: &AtomicBool) {
+    let ended = observe.follow(&mut || mark(following, heard));
+    if following.swap(false, Ordering::Relaxed)
+        && let Err(error) = ended
+    {
+        eprintln!("errol: stream: {error}");
     }
 }
 
