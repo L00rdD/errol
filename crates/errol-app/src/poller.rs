@@ -22,44 +22,55 @@ const RETRY: Duration = Duration::from_secs(15);
 
 pub fn start(observe: Arc<ObserveFeed>) {
     observe.refresh();
-    let spawned = thread::Builder::new().name("poller".into()).spawn(move || {
-        // nothing heard yet: the stream is tried at once
-        let heard = Arc::new(Mutex::new(
-            Instant::now()
-                .checked_sub(STALE)
-                .unwrap_or_else(Instant::now),
-        ));
-        let following = Arc::new(AtomicBool::new(false));
-        let mut tried: Option<Instant> = None;
-        loop {
-            let last = *heard.lock().unwrap_or_else(PoisonError::into_inner);
-            let quiet = last.elapsed() >= STALE;
-            if quiet && tried.is_none_or(|at| at.elapsed() >= RETRY) {
-                tried = Some(Instant::now());
-                follow(observe.clone(), heard.clone(), following.clone());
-            }
-            if quiet || !following.load(Ordering::Relaxed) {
-                observe.refresh();
-            }
-            thread::sleep(INTERVAL);
-        }
-    });
+    let spawned = thread::Builder::new()
+        .name("poller".into())
+        .spawn(move || poll(&observe));
     // without a poller the screen keeps the first snapshot: still worth showing
     if let Err(error) = spawned {
         eprintln!("errol: no poller thread: {error}");
     }
 }
 
+/// The poller's loop: follows the stream when it can, asks every second when not.
+fn poll(observe: &Arc<ObserveFeed>) {
+    // nothing heard yet: the stream is tried at once
+    let heard = Arc::new(Mutex::new(
+        Instant::now()
+            .checked_sub(STALE)
+            .unwrap_or_else(Instant::now),
+    ));
+    let following = Arc::new(AtomicBool::new(false));
+    let mut tried: Option<Instant> = None;
+    loop {
+        let heard_ago = heard
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .elapsed();
+        if should_try_stream(heard_ago, tried.map(|at| at.elapsed())) {
+            tried = Some(Instant::now());
+            follow(observe.clone(), heard.clone(), following.clone());
+        }
+        if should_ask(heard_ago, following.load(Ordering::Relaxed)) {
+            observe.refresh();
+        }
+        thread::sleep(INTERVAL);
+    }
+}
+
+/// The stream is tried when it has been quiet too long, and not tried lately.
+fn should_try_stream(heard_ago: Duration, tried_ago: Option<Duration>) -> bool {
+    heard_ago >= STALE && tried_ago.is_none_or(|ago| ago >= RETRY)
+}
+
+/// The poller asks by itself while the stream is quiet or not followed.
+fn should_ask(heard_ago: Duration, following: bool) -> bool {
+    heard_ago >= STALE || !following
+}
+
 /// Follows the stream on its own thread until it ends; a stream that hangs
 /// (a cable pulled) stays quiet, and the poller takes over after `STALE`.
 fn follow(observe: Arc<ObserveFeed>, heard: Arc<Mutex<Instant>>, following: Arc<AtomicBool>) {
     let spawned = thread::Builder::new().name("stream".into()).spawn(move || {
-        let mark = |following: &AtomicBool, heard: &Mutex<Instant>| {
-            *heard.lock().unwrap_or_else(PoisonError::into_inner) = Instant::now();
-            if !following.swap(true, Ordering::Relaxed) {
-                eprintln!("errol: following the feed's stream");
-            }
-        };
         let ended = observe.follow(&mut || mark(&following, &heard));
         if following.swap(false, Ordering::Relaxed)
             && let Err(error) = ended
@@ -69,5 +80,46 @@ fn follow(observe: Arc<ObserveFeed>, heard: Arc<Mutex<Instant>>, following: Arc<
     });
     if let Err(error) = spawned {
         eprintln!("errol: no stream thread: {error}");
+    }
+}
+
+/// The stream said something: it is followed, and heard now.
+fn mark(following: &AtomicBool, heard: &Mutex<Instant>) {
+    *heard.lock().unwrap_or_else(PoisonError::into_inner) = Instant::now();
+    if !following.swap(true, Ordering::Relaxed) {
+        eprintln!("errol: following the feed's stream");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_stream_is_tried_once_quiet_and_not_tried_lately() {
+        assert!(should_try_stream(STALE, None));
+        assert!(should_try_stream(STALE, Some(RETRY)));
+        assert!(!should_try_stream(STALE, Some(Duration::from_secs(1))));
+        assert!(!should_try_stream(Duration::from_secs(3), None));
+    }
+
+    #[test]
+    fn the_poller_asks_unless_a_live_stream_is_followed() {
+        assert!(should_ask(Duration::from_secs(1), false));
+        assert!(should_ask(STALE, true));
+        assert!(!should_ask(Duration::from_secs(1), true));
+    }
+
+    #[test]
+    fn a_word_from_the_stream_marks_it_followed_and_heard() {
+        let following = AtomicBool::new(false);
+        let long_ago = Instant::now()
+            .checked_sub(STALE)
+            .unwrap_or_else(Instant::now);
+        let heard = Mutex::new(long_ago);
+        mark(&following, &heard);
+        mark(&following, &heard);
+        assert!(following.load(Ordering::Relaxed));
+        assert!(heard.lock().unwrap().elapsed() < STALE);
     }
 }
