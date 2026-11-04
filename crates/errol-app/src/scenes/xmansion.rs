@@ -135,13 +135,9 @@ fn hover(seed: u32, seconds: f64) -> f64 {
 /// Walk area: x, y, width, height.
 type Area = (f64, f64, f64, f64);
 
-fn pose_at(actor: &str, area: Area, seconds: f64, walking: bool, movement: Movement) -> Pose {
-    let seed = hash32(actor);
-    let point = |k: f64| Point {
-        x: area.0 + unit(seed, k * 2.0) * area.2,
-        y: area.1 + unit(seed, k * 2.0 + 1.0) * area.3,
-    };
-    let still = |at: Point, flip: bool| Pose {
+/// Standing at `at`, facing the viewer.
+fn still(at: Point, flip: bool) -> Pose {
+    Pose {
         x: at.x.floor(),
         y: at.y.floor(),
         facing: Facing::Front,
@@ -151,69 +147,116 @@ fn pose_at(actor: &str, area: Area, seconds: f64, walking: bool, movement: Movem
         alpha: 1.0,
         travel: None,
         cast: None,
-    };
+    }
+}
+
+/// One leg of a walk: where it goes, how far along, and the leg's number.
+struct Leg {
+    seed: u32,
+    k: f64,
+    progress: f64,
+    from: Point,
+    to: Point,
+}
+
+impl Leg {
+    fn at(actor: &str, area: Area, seconds: f64, pace: f64) -> Self {
+        let seed = hash32(actor);
+        let leg_seconds = (3.0 + unit(seed, 999.0) * 2.5) * pace;
+        let clock = seconds / leg_seconds + unit(seed, 998.0) * 100.0;
+        let k = clock.floor();
+        Self {
+            seed,
+            k,
+            progress: clock - k,
+            from: wander_point(seed, area, k),
+            to: wander_point(seed, area, k + 1.0),
+        }
+    }
+
+    fn dx(&self) -> f64 {
+        self.to.x - self.from.x
+    }
+
+    fn dy(&self) -> f64 {
+        self.to.y - self.from.y
+    }
+}
+
+/// The `k`-th place an actor wanders to.
+fn wander_point(seed: u32, area: Area, k: f64) -> Point {
+    Point {
+        x: area.0 + unit(seed, k * 2.0) * area.2,
+        y: area.1 + unit(seed, k * 2.0 + 1.0) * area.3,
+    }
+}
+
+fn pose_at(actor: &str, area: Area, seconds: f64, walking: bool, movement: Movement) -> Pose {
     if !walking {
-        return still(point(0.0), false);
+        return still(wander_point(hash32(actor), area, 0.0), false);
     }
     let (pace, share) = movement.timing();
-    let leg_seconds = (3.0 + unit(seed, 999.0) * 2.5) * pace;
-    let clock = seconds / leg_seconds + unit(seed, 998.0) * 100.0;
-    let k = clock.floor();
-    let progress = clock - k;
-    let (from, to) = (point(k), point(k + 1.0));
-    let (dx, dy) = (to.x - from.x, to.y - from.y);
-    let flying = movement == Movement::Fly;
-
-    if progress >= share {
-        return Pose {
-            lift: if flying { hover(seed, seconds) } else { 0.0 },
-            cast: (unit(seed, 5000.0 + k) < CAST_CHANCE)
-                .then(|| (k, (progress - share) / (1.0 - share))),
-            ..still(to, dx < 0.0)
-        };
+    let leg = Leg::at(actor, area, seconds, pace);
+    if leg.progress >= share {
+        return paused(&leg, share, seconds, movement);
     }
-    let u = progress / share;
-    let travel = Some((from, to, u));
+    let u = leg.progress / share;
     if movement == Movement::Teleport {
-        let at = if u < 0.5 { from } else { to };
-        let alpha = if u < 0.3 {
-            1.0 - u / 0.3
-        } else if u > 0.7 {
-            (u - 0.7) / 0.3
+        return teleported(&leg, u);
+    }
+    moving(&leg, u, seconds, movement)
+}
+
+/// At the end of a leg: standing, maybe using a power.
+fn paused(leg: &Leg, share: f64, seconds: f64, movement: Movement) -> Pose {
+    Pose {
+        lift: if movement == Movement::Fly {
+            hover(leg.seed, seconds)
         } else {
             0.0
-        };
-        return Pose {
-            alpha,
-            travel,
-            ..still(at, dx < 0.0)
-        };
-    }
-    let steps = if movement == Movement::Dash {
-        16.0
-    } else {
-        8.0
-    };
-    // the floor is seen at an angle: vertical moves count double
-    let vertical = dy.abs() * 2.0 > dx.abs();
-    Pose {
-        x: (from.x + dx * u).floor(),
-        y: (from.y + dy * u).floor(),
-        facing: if !vertical {
-            Facing::Side
-        } else if dy < 0.0 {
-            Facing::Back
-        } else {
-            Facing::Front
         },
+        cast: (unit(leg.seed, 5000.0 + leg.k) < CAST_CHANCE)
+            .then(|| (leg.k, (leg.progress - share) / (1.0 - share))),
+        ..still(leg.to, leg.dx() < 0.0)
+    }
+}
+
+/// A teleport: fades out where it was, fades in where it goes.
+fn teleported(leg: &Leg, u: f64) -> Pose {
+    let at = if u < 0.5 { leg.from } else { leg.to };
+    Pose {
+        alpha: teleport_alpha(u),
+        travel: Some((leg.from, leg.to, u)),
+        ..still(at, leg.dx() < 0.0)
+    }
+}
+
+fn teleport_alpha(u: f64) -> f64 {
+    if u < 0.3 {
+        1.0 - u / 0.3
+    } else if u > 0.7 {
+        (u - 0.7) / 0.3
+    } else {
+        0.0
+    }
+}
+
+/// Walking, flying, phasing or dashing `u` of the way along a leg.
+fn moving(leg: &Leg, u: f64, seconds: f64, movement: Movement) -> Pose {
+    let (dx, dy) = (leg.dx(), leg.dy());
+    let flying = movement == Movement::Fly;
+    Pose {
+        x: (leg.from.x + dx * u).floor(),
+        y: (leg.from.y + dy * u).floor(),
+        facing: facing(dx, dy),
         flip: dx < 0.0,
         frame: if flying {
             0
         } else {
-            WALK_CYCLE[(seconds * steps).floor() as usize % WALK_CYCLE.len()]
+            walk_frame(seconds, movement)
         },
         lift: if flying {
-            hover(seed, seconds) + 3.0
+            hover(leg.seed, seconds) + 3.0
         } else {
             0.0
         },
@@ -222,9 +265,29 @@ fn pose_at(actor: &str, area: Area, seconds: f64, walking: bool, movement: Movem
         } else {
             1.0
         },
-        travel,
+        travel: Some((leg.from, leg.to, u)),
         cast: None,
     }
+}
+
+/// The floor is seen at an angle: vertical moves count double.
+fn facing(dx: f64, dy: f64) -> Facing {
+    if dy.abs() * 2.0 <= dx.abs() {
+        Facing::Side
+    } else if dy < 0.0 {
+        Facing::Back
+    } else {
+        Facing::Front
+    }
+}
+
+fn walk_frame(seconds: f64, movement: Movement) -> u32 {
+    let steps = if movement == Movement::Dash {
+        16.0
+    } else {
+        8.0
+    };
+    WALK_CYCLE[(seconds * steps).floor() as usize % WALK_CYCLE.len()]
 }
 
 // ---------- pixels.ts: 1px rects, gathered by colour ----------
@@ -404,15 +467,50 @@ pub fn draw_scene(
     scale: f32,
     now_ms: i64,
 ) -> bool {
+    let Some((sheets, images)) = load(gfx, textures, cerebro, scene) else {
+        return false;
+    };
+    // Cerebro's ticker: ten frames a second, on the wall clock
+    let seconds = (now_ms as f64 / 100.0).floor() / 10.0;
+    let (width, height) = sheets.room_size;
+    gfx.canvas.save();
+    gfx.canvas.translate(x, y);
+    gfx.canvas.scale(scale, scale);
+    gfx.canvas
+        .intersect_scissor(0.0, 0.0, width as f32, height as f32);
+    let mut px = Px::new(gfx);
+    let frame = room_frame(scene, seconds);
+    px.image(
+        sheets.room,
+        (frame * width, 0.0, width, height),
+        (0.0, 0.0, width, height),
+        1.0,
+    );
+    for member in &cast(scene, images, seconds) {
+        draw_actor(&mut px, &sheets, member, seconds);
+    }
+    px.flush();
+    gfx.canvas.restore();
+    true
+}
+
+/// The room, the emotes and each actor's sheet; None while the room or the
+/// emotes load.
+fn load(
+    gfx: &mut Gfx,
+    textures: &mut Textures,
+    cerebro: &Cerebro,
+    scene: &SessionScene,
+) -> Option<(Sheets, Vec<Option<ImageId>>)> {
     let room = textures.get(gfx.canvas, &scene.room, FULL, Finish::Pixel);
     let emotes = cerebro
         .emotes
         .as_ref()
         .and_then(|emotes| textures.get(gfx.canvas, emotes, FULL, Finish::Pixel));
     let (Some(room), Some(emotes)) = (room, emotes) else {
-        return false;
+        return None;
     };
-    let images: Vec<Option<ImageId>> = scene
+    let images = scene
         .actors
         .iter()
         .map(|actor| textures.get(gfx.canvas, &actor.sprite, FULL, Finish::Pixel))
@@ -429,35 +527,27 @@ pub fn draw_scene(
             f64::from(cerebro.character_size.1),
         ),
     };
-    // Cerebro's ticker: ten frames a second, on the wall clock
-    let seconds = (now_ms as f64 / 100.0).floor() / 10.0;
-    let (width, height) = sheets.room_size;
-    gfx.canvas.save();
-    gfx.canvas.translate(x, y);
-    gfx.canvas.scale(scale, scale);
-    gfx.canvas
-        .intersect_scissor(0.0, 0.0, width as f32, height as f32);
-    let mut px = Px::new(gfx);
+    Some((sheets, images))
+}
 
-    let frame = if scene.frames > 1 {
+/// The room's animation frame at `seconds`.
+fn room_frame(scene: &SessionScene, seconds: f64) -> f64 {
+    if scene.frames > 1 {
         (seconds * f64::from(scene.fps)).floor() % f64::from(scene.frames)
     } else {
         0.0
-    };
-    px.image(
-        sheets.room,
-        (frame * width, 0.0, width, height),
-        (0.0, 0.0, width, height),
-        1.0,
-    );
+    }
+}
 
+/// The actors whose sheet is there, posed, back to front, so characters
+/// lower on screen overlap those behind them.
+fn cast(scene: &SessionScene, images: Vec<Option<ImageId>>, seconds: f64) -> Vec<Cast<'_>> {
     let area = (
         f64::from(scene.walk.0),
         f64::from(scene.walk.1),
         f64::from(scene.walk.2),
         f64::from(scene.walk.3),
     );
-    // back to front, so characters lower on screen overlap those behind them
     let mut cast: Vec<Cast> = scene
         .actors
         .iter()
@@ -479,12 +569,7 @@ pub fn draw_scene(
         })
         .collect();
     cast.sort_by(|a, b| a.pose.y.total_cmp(&b.pose.y));
-    for member in &cast {
-        draw_actor(&mut px, &sheets, member, seconds);
-    }
-    px.flush();
-    gfx.canvas.restore();
-    true
+    cast
 }
 
 const AIMED: [&str; 4] = ["beam", "claws", "throw", "sonic"];
@@ -510,36 +595,10 @@ fn draw_actor(px: &mut Px, sheets: &Sheets, member: &Cast, seconds: f64) {
         size,
         pose,
     };
-
-    // the shadow stays on the floor and shrinks as the character rises
-    px.alpha = pose.alpha;
-    px.style(Color::rgbaf(20.0 / 255.0, 12.0 / 255.0, 30.0 / 255.0, 0.28));
-    let shadow = if lift > 0.0 { 12.0 } else { 18.0 };
-    px.rect(x - shadow / 2.0, pose.y, shadow, 2.0);
-    px.rect(x - shadow / 2.0 + 2.0, pose.y + 2.0, shadow - 4.0, 1.0);
-
-    if let Some(aura) = &actor.aura {
-        px.alpha = pose.alpha * (0.18 + 0.08 * (seconds * 3.0 + pose.x).sin());
-        px.disc(x, pose.y - lift - 15.0, 16.0, hex(aura));
-    }
+    shadow(px, &pose, x, lift);
+    aura(px, actor, &pose, x, lift, seconds);
     px.alpha = 1.0;
-
-    if let Some((from, to, progress)) = pose.travel.filter(|_| member.movement == Movement::Dash) {
-        // super speed: fading copies left behind along the path
-        for i in (1..=3).rev() {
-            let u = progress - f64::from(i) * 0.08;
-            if u <= 0.0 {
-                continue;
-            }
-            sprite.draw(
-                px,
-                (from.x + (to.x - from.x) * u).floor(),
-                (from.y + (to.y - from.y) * u).floor(),
-                0.4 / f64::from(i),
-            );
-        }
-    }
-
+    afterimages(px, member, &sprite);
     let asleep = actor.state == ActorState::Asleep;
     sprite.draw(
         px,
@@ -547,14 +606,12 @@ fn draw_actor(px: &mut Px, sheets: &Sheets, member: &Cast, seconds: f64) {
         pose.y - lift,
         pose.alpha * if asleep { 0.75 } else { 1.0 },
     );
-
     if let Some(travel) = pose
         .travel
         .filter(|_| member.movement == Movement::Teleport)
     {
         teleport_smoke(px, travel, hex(&actor.colour));
     }
-
     draw_power(
         px,
         &actor.power,
@@ -571,13 +628,56 @@ fn draw_actor(px: &mut Px, sheets: &Sheets, member: &Cast, seconds: f64) {
             sprite: &sprite,
         },
     );
+    mood(px, sheets, actor.state, (x, top), seconds);
+}
 
-    if asleep {
+/// The shadow stays on the floor and shrinks as the character rises.
+fn shadow(px: &mut Px, pose: &Pose, x: f64, lift: f64) {
+    px.alpha = pose.alpha;
+    px.style(Color::rgbaf(20.0 / 255.0, 12.0 / 255.0, 30.0 / 255.0, 0.28));
+    let shadow = if lift > 0.0 { 12.0 } else { 18.0 };
+    px.rect(x - shadow / 2.0, pose.y, shadow, 2.0);
+    px.rect(x - shadow / 2.0 + 2.0, pose.y + 2.0, shadow - 4.0, 1.0);
+}
+
+fn aura(px: &mut Px, actor: &Actor, pose: &Pose, x: f64, lift: f64, seconds: f64) {
+    if let Some(aura) = &actor.aura {
+        px.alpha = pose.alpha * (0.18 + 0.08 * (seconds * 3.0 + pose.x).sin());
+        px.disc(x, pose.y - lift - 15.0, 16.0, hex(aura));
+    }
+}
+
+/// Super speed: fading copies left behind along the path.
+fn afterimages(px: &mut Px, member: &Cast, sprite: &Sprite) {
+    let Some((from, to, progress)) = member
+        .pose
+        .travel
+        .filter(|_| member.movement == Movement::Dash)
+    else {
+        return;
+    };
+    for i in (1..=3).rev() {
+        let u = progress - f64::from(i) * 0.08;
+        if u <= 0.0 {
+            continue;
+        }
+        sprite.draw(
+            px,
+            (from.x + (to.x - from.x) * u).floor(),
+            (from.y + (to.y - from.y) * u).floor(),
+            0.4 / f64::from(i),
+        );
+    }
+}
+
+/// The emote over an actor's head: rising Zs asleep, a blinking "!" alert.
+fn mood(px: &mut Px, sheets: &Sheets, state: ActorState, (x, top): (f64, f64), seconds: f64) {
+    if state == ActorState::Asleep {
         let rise = (seconds * 2.0).floor() % 4.0;
         px.alpha = 1.0 - rise * 0.2;
         emote(px, sheets, 0.0, x + 3.0, top - 2.0 - rise);
         px.alpha = 1.0;
-    } else if actor.state == ActorState::Alert && (seconds * 3.0).floor() % 2.0 == 0.0 {
+    } else if state == ActorState::Alert && (seconds * 3.0).floor() % 2.0 == 0.0 {
         emote(
             px,
             sheets,
@@ -598,6 +698,14 @@ fn emote(px: &mut Px, sheets: &Sheets, index: f64, x: f64, y: f64) {
     );
 }
 
+fn sheet_row(facing: Facing) -> f64 {
+    match facing {
+        Facing::Front => 0.0,
+        Facing::Back => 1.0,
+        Facing::Side => 2.0,
+    }
+}
+
 /// A character's sheet: frames side by side, rows front, back, side.
 struct Sprite {
     image: ImageId,
@@ -607,6 +715,16 @@ struct Sprite {
 }
 
 impl Sprite {
+    /// Where the current frame is on the sheet.
+    fn source(&self) -> (f64, f64, f64, f64) {
+        (
+            f64::from(self.pose.frame) * self.frame.0,
+            sheet_row(self.pose.facing) * self.frame.1,
+            self.frame.0,
+            self.frame.1,
+        )
+    }
+
     /// The current frame with its feet at (x, y).
     fn draw(&self, px: &mut Px, x: f64, y: f64, alpha: f64) {
         if alpha <= 0.0 {
@@ -615,17 +733,7 @@ impl Sprite {
         let (width, height) = self.size;
         let left = round(x - width / 2.0);
         let top = round(y - height + 1.0);
-        let row = match self.pose.facing {
-            Facing::Front => 0.0,
-            Facing::Back => 1.0,
-            Facing::Side => 2.0,
-        };
-        let source = (
-            f64::from(self.pose.frame) * self.frame.0,
-            row * self.frame.1,
-            self.frame.0,
-            self.frame.1,
-        );
+        let source = self.source();
         // only the side view is drawn facing right; front and back stay as drawn
         if self.pose.flip && self.pose.facing == Facing::Side {
             px.flush();
@@ -642,24 +750,14 @@ impl Sprite {
 
 /// Teleport: a puff of smoke where the character leaves, then where it lands.
 fn teleport_smoke(px: &mut Px, (from, to, progress): (Point, Point, f64), colour: Color) {
-    let at = if progress < 0.5 { from } else { to };
-    let t = if progress < 0.5 {
-        progress / 0.5
-    } else {
-        (progress - 0.5) / 0.5
-    };
-    let spread = if progress < 0.5 { t } else { 1.0 - t };
+    let puff = Puff::at(progress);
+    let at = if puff.leaving { from } else { to };
     let (cx, cy) = (at.x.floor(), at.y.floor() - 10.0);
     let saved = px.alpha;
-    px.alpha = 0.9
-        * if progress < 0.5 {
-            1.0 - t * 0.6
-        } else {
-            0.4 + (1.0 - t) * 0.6
-        };
+    px.alpha = puff.alpha;
     for i in 0..14 {
-        let angle = f64::from(i) / 14.0 * PI * 2.0 + spread;
-        let r = 3.0 + spread * 11.0;
+        let angle = f64::from(i) / 14.0 * PI * 2.0 + puff.spread;
+        let r = 3.0 + puff.spread * 11.0;
         px.style(if i % 3 == 0 { rgb(WHITE) } else { colour });
         px.rect(
             round(cx + angle.cos() * r),
@@ -669,6 +767,35 @@ fn teleport_smoke(px: &mut Px, (from, to, progress): (Point, Point, f64), colour
         );
     }
     px.alpha = saved;
+}
+
+/// A teleport's smoke at `progress`: where it is, how wide, how thick.
+#[derive(Debug, PartialEq)]
+struct Puff {
+    leaving: bool,
+    spread: f64,
+    alpha: f64,
+}
+
+impl Puff {
+    fn at(progress: f64) -> Self {
+        let leaving = progress < 0.5;
+        if leaving {
+            let t = progress / 0.5;
+            Self {
+                leaving,
+                spread: t,
+                alpha: 0.9 * (1.0 - t * 0.6),
+            }
+        } else {
+            let t = (progress - 0.5) / 0.5;
+            Self {
+                leaving,
+                spread: 1.0 - t,
+                alpha: 0.9 * (0.4 + (1.0 - t) * 0.6),
+            }
+        }
+    }
 }
 
 // ---------- powers.ts ----------
@@ -738,25 +865,36 @@ fn draw_power(px: &mut Px, kind: &str, p: &Power) {
     let saved = px.alpha;
     // fade in and out so effects never pop
     px.alpha = 1.0_f64.min(e * 6.0).min((1.0 - e) * 6.0);
-    match kind {
-        "beam" => beam(px, p, e),
-        "bolt" => bolt(px, p, e),
-        "psychic" => psychic(px, p, e),
-        "fire" => fire(px, p, e),
-        "frost" => frost(px, p, e),
-        "claws" => claws(px, p, e),
-        "throw" => projectile(px, p, e),
-        "sparks" => sparks(px, p, e),
-        "shield" => shield(px, p, e),
-        "magnet" => magnet(px, p, e),
-        "sonic" => sonic(px, p, e),
-        "quake" => quake(px, p, e),
-        "clone" => clone(px, p, e),
-        "leap" => leap(px, p, e),
-        "absorb" => absorb(px, p, e),
-        _ => glow(px, p, e),
-    }
+    effect(kind)(px, p, e);
     px.alpha = saved;
+}
+
+type Effect = fn(&mut Px<'_, '_>, &Power<'_>, f64);
+
+/// Each power's effect; a glow for the others.
+const EFFECTS: [(&str, Effect); 15] = [
+    ("beam", beam),
+    ("bolt", bolt),
+    ("psychic", psychic),
+    ("fire", fire),
+    ("frost", frost),
+    ("claws", claws),
+    ("throw", projectile),
+    ("sparks", sparks),
+    ("shield", shield),
+    ("magnet", magnet),
+    ("sonic", sonic),
+    ("quake", quake),
+    ("clone", clone),
+    ("leap", leap),
+    ("absorb", absorb),
+];
+
+fn effect(kind: &str) -> Effect {
+    EFFECTS
+        .iter()
+        .find(|(name, _)| *name == kind)
+        .map_or(glow, |&(_, effect)| effect)
 }
 
 /// Optic blast or plasma: a beam from the eyes to the wall.
@@ -1006,20 +1144,7 @@ fn quake(px: &mut Px, p: &Power, e: f64) {
     let ground = p.pose.y + 1.0;
     let length = round((e * 3.0).min(1.0) * 26.0) as u32;
     for dir in [-1.0, 1.0] {
-        let mut y = ground;
-        for s in 0..length {
-            let s = f64::from(s);
-            let side = if dir > 0.0 { 1.0 } else { 0.0 };
-            if unit(p.seed, s * 2.0 + side) < 0.3 {
-                y += if unit(p.seed, s + 77.0) < 0.5 {
-                    -1.0
-                } else {
-                    1.0
-                };
-            }
-            px.style(rgb(0xa89878));
-            px.rect(p.x + dir * (5.0 + s), y, 1.0, 1.0);
-        }
+        crack(px, p, ground, dir, length);
     }
     px.style(rgb(0xc8b89a));
     for i in 0..10 {
@@ -1027,6 +1152,29 @@ fn quake(px: &mut Px, p: &Power, e: f64) {
         let hop = (e * 3.0 + unit(p.seed, i)) % 1.0;
         let x = round(p.x + (unit(p.seed, i + 10.0) - 0.5) * 30.0);
         px.rect(x, round(ground - (PI * hop).sin() * 8.0), 2.0, 2.0);
+    }
+}
+
+/// One crack, `length` pixels towards `dir`, wandering up and down.
+fn crack(px: &mut Px, p: &Power, ground: f64, dir: f64, length: u32) {
+    let side = if dir > 0.0 { 1.0 } else { 0.0 };
+    let mut y = ground;
+    for s in 0..length {
+        let s = f64::from(s);
+        y += crack_step(p.seed, s, side);
+        px.style(rgb(0xa89878));
+        px.rect(p.x + dir * (5.0 + s), y, 1.0, 1.0);
+    }
+}
+
+/// How the crack moves at step `s`: up, down, or straight on.
+fn crack_step(seed: u32, s: f64, side: f64) -> f64 {
+    if unit(seed, s * 2.0 + side) >= 0.3 {
+        0.0
+    } else if unit(seed, s + 77.0) < 0.5 {
+        -1.0
+    } else {
+        1.0
     }
 }
 
@@ -1188,44 +1336,12 @@ pub fn draw_card(
     now_ms: i64,
 ) {
     let (pad, gap, title, caption) = measures(scale);
-    let (w, h) = (card_width(cerebro, scale), card_height(cerebro, scale));
+    let w = card_width(cerebro, scale);
     let inner = w - pad * 2.0;
-    let mut card = Path::new();
-    card.rounded_rect(
-        x + 0.5,
-        y + 0.5,
-        w - 1.0,
-        h - 1.0,
-        8.0 * (scale / 2.0).clamp(0.6, 1.5),
-    );
-    gfx.fill(&card, rgb(CARD));
-    let border = match session.status {
-        SessionStatus::Idle => fade(Color::white(), 0.08),
-        status => fade(status_colour(status), 0.7),
-    };
-    gfx.stroke(&card, border, 1.0);
-
+    card_frame(gfx, cerebro, session.status, (x, y), scale);
     let mut top = y + pad;
-    // the dot and the name
-    let name_style = Type::new(Face::MonoBold, title);
-    let dot = title * 0.66;
-    gfx.disc(
-        x + pad + dot / 2.0,
-        top + title * 0.62,
-        dot / 2.0,
-        status_colour(session.status),
-    );
-    let name = ellipsis(gfx, &session.name, inner - dot - 6.0, name_style);
-    gfx.text(
-        x + pad + dot + 6.0,
-        top + title * 0.62,
-        &name,
-        name_style,
-        rgb(TEXT),
-        Anchor::MIDDLE_LEFT,
-    );
+    card_name(gfx, session, (x + pad, top), inner, title);
     top += title * 1.25 + gap;
-
     // the room
     let room_h = cerebro.room_size.1 as f32 * scale;
     if let Some(scene) = &session.scene {
@@ -1235,44 +1351,11 @@ pub fn draw_card(
         draw_scene(gfx, textures, cerebro, scene, x + pad, top, scale, now_ms);
     }
     top += room_h + gap;
-
-    // the room — the cast
-    let cast_style = Type::new(Face::MonoBold, caption);
-    let room = session.room.clone().unwrap_or_default();
-    let names: Vec<&str> = session
-        .scene
-        .iter()
-        .flat_map(|scene| scene.actors.iter().map(|actor| actor.name.as_str()))
-        .collect();
-    let lead = if names.is_empty() {
-        session.lead.clone().unwrap_or_default()
-    } else {
-        names.join(" · ")
-    };
-    let muted = format!("{room} —");
-    let muted_w = gfx.text(
-        x + pad,
-        top,
-        &muted,
-        Type::new(Face::Mono, caption),
-        rgb(MUTED),
-        Anchor::TOP_LEFT,
-    );
-    let cast = ellipsis(gfx, &format!(" {lead}"), inner - muted_w, cast_style);
-    gfx.text(
-        x + pad + muted_w,
-        top,
-        &cast,
-        cast_style,
-        rgb(TEXT),
-        Anchor::TOP_LEFT,
-    );
+    card_cast(gfx, session, (x + pad, top), inner, caption);
     top += caption * 1.3 + gap;
-
     // the folder, and the status for how long
     let meta = Type::new(Face::Mono, caption);
-    let since = session.since.map_or(0, |since| now_ms - since.0);
-    let status = format!("{} {}", status_label(session.status), humanize(since));
+    let status = status_line(session, now_ms);
     let status_w = gfx.text(
         x + w - pad,
         top,
@@ -1284,6 +1367,103 @@ pub fn draw_card(
     let project = session.project.clone().unwrap_or_default();
     let project = ellipsis(gfx, &project, inner - status_w - 6.0, meta);
     gfx.text(x + pad, top, &project, meta, rgb(MUTED), Anchor::TOP_LEFT);
+}
+
+/// The card's rounded box, bordered in its status' colour.
+fn card_frame(
+    gfx: &mut Gfx,
+    cerebro: &Cerebro,
+    status: SessionStatus,
+    (x, y): (f32, f32),
+    scale: f32,
+) {
+    let (w, h) = (card_width(cerebro, scale), card_height(cerebro, scale));
+    let mut card = Path::new();
+    card.rounded_rect(
+        x + 0.5,
+        y + 0.5,
+        w - 1.0,
+        h - 1.0,
+        8.0 * (scale / 2.0).clamp(0.6, 1.5),
+    );
+    gfx.fill(&card, rgb(CARD));
+    gfx.stroke(&card, border_colour(status), 1.0);
+}
+
+fn border_colour(status: SessionStatus) -> Color {
+    match status {
+        SessionStatus::Idle => fade(Color::white(), 0.08),
+        status => fade(status_colour(status), 0.7),
+    }
+}
+
+/// The status dot and the session's name.
+fn card_name(gfx: &mut Gfx, session: &Session, (left, top): (f32, f32), inner: f32, title: f32) {
+    let name_style = Type::new(Face::MonoBold, title);
+    let dot = title * 0.66;
+    gfx.disc(
+        left + dot / 2.0,
+        top + title * 0.62,
+        dot / 2.0,
+        status_colour(session.status),
+    );
+    let name = ellipsis(gfx, &session.name, inner - dot - 6.0, name_style);
+    gfx.text(
+        left + dot + 6.0,
+        top + title * 0.62,
+        &name,
+        name_style,
+        rgb(TEXT),
+        Anchor::MIDDLE_LEFT,
+    );
+}
+
+/// The room — the cast.
+fn card_cast(gfx: &mut Gfx, session: &Session, (left, top): (f32, f32), inner: f32, caption: f32) {
+    let cast_style = Type::new(Face::MonoBold, caption);
+    let muted = format!("{} —", session.room.clone().unwrap_or_default());
+    let muted_w = gfx.text(
+        left,
+        top,
+        &muted,
+        Type::new(Face::Mono, caption),
+        rgb(MUTED),
+        Anchor::TOP_LEFT,
+    );
+    let cast = ellipsis(
+        gfx,
+        &format!(" {}", cast_names(session)),
+        inner - muted_w,
+        cast_style,
+    );
+    gfx.text(
+        left + muted_w,
+        top,
+        &cast,
+        cast_style,
+        rgb(TEXT),
+        Anchor::TOP_LEFT,
+    );
+}
+
+/// The actors on stage, else the session's lead.
+fn cast_names(session: &Session) -> String {
+    let names: Vec<&str> = session
+        .scene
+        .iter()
+        .flat_map(|scene| scene.actors.iter().map(|actor| actor.name.as_str()))
+        .collect();
+    if names.is_empty() {
+        session.lead.clone().unwrap_or_default()
+    } else {
+        names.join(" · ")
+    }
+}
+
+/// "needs you 12min": the status, and for how long.
+fn status_line(session: &Session, now_ms: i64) -> String {
+    let since = session.since.map_or(0, |since| now_ms - since.0);
+    format!("{} {}", status_label(session.status), humanize(since))
 }
 
 /// The largest scale whose card fits `w` × `h`.
@@ -1343,6 +1523,7 @@ pub fn draw_sessions(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use errol_domain::entities::PictureRef;
 
     // expected values computed with Cerebro's own wander.ts (node)
     #[test]
@@ -1380,6 +1561,213 @@ mod tests {
         assert_eq!(humanize(754_000), "12min");
         assert_eq!(humanize(3_900_000), "1h05");
         assert_eq!(humanize(200_000_000), "2d");
+    }
+
+    const AREA: Area = (10.0, 76.0, 172.0, 40.0);
+
+    /// A walking pose at `seconds`, moving (`true`) or paused.
+    fn walk_until(movement: Movement, moving: bool) -> Pose {
+        let (_, share) = movement.timing();
+        (0..10_000)
+            .map(|i| f64::from(i) * 0.05)
+            .map(|seconds| {
+                (
+                    seconds,
+                    Leg::at("lead:abc", AREA, seconds, movement.timing().0),
+                )
+            })
+            .find(|(_, leg)| (leg.progress < share) == moving)
+            .map(|(seconds, _)| pose_at("lead:abc", AREA, seconds, true, movement))
+            .expect("a pose")
+    }
+
+    #[test]
+    fn a_still_actor_stands_on_its_first_spot() {
+        let pose = pose_at("lead:abc", AREA, 12.0, false, Movement::Walk);
+        let first = wander_point(hash32("lead:abc"), AREA, 0.0);
+        assert_eq!((pose.x, pose.y), (first.x.floor(), first.y.floor()));
+        assert_eq!(pose.facing, Facing::Front);
+        assert!(pose.travel.is_none() && pose.cast.is_none());
+    }
+
+    #[test]
+    fn movements_read_their_names() {
+        assert_eq!(Movement::parse("fly"), Movement::Fly);
+        assert_eq!(Movement::parse("teleport"), Movement::Teleport);
+        assert_eq!(Movement::parse("phase"), Movement::Phase);
+        assert_eq!(Movement::parse("dash"), Movement::Dash);
+        assert_eq!(Movement::parse("swim"), Movement::Walk);
+    }
+
+    #[test]
+    fn a_flyer_hovers_and_a_phaser_is_see_through() {
+        let flying = walk_until(Movement::Fly, true);
+        assert_eq!(flying.frame, 0);
+        assert!(flying.lift >= 9.0);
+        let resting = walk_until(Movement::Fly, false);
+        assert!(resting.lift >= 6.0 && resting.travel.is_none());
+        assert!((walk_until(Movement::Phase, true).alpha - 0.45).abs() < 1e-9);
+        assert!((walk_until(Movement::Dash, true).alpha - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_teleport_fades_out_then_in() {
+        let pose = walk_until(Movement::Teleport, true);
+        assert!(pose.travel.is_some());
+        assert!((teleport_alpha(0.0) - 1.0).abs() < 1e-9);
+        assert!((teleport_alpha(0.15) - 0.5).abs() < 1e-9);
+        assert!(teleport_alpha(0.5).abs() < 1e-9);
+        assert!((teleport_alpha(1.0) - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn the_floor_is_seen_at_an_angle() {
+        assert_eq!(facing(10.0, 4.0), Facing::Side);
+        assert_eq!(facing(10.0, -6.0), Facing::Back);
+        assert_eq!(facing(-10.0, 6.0), Facing::Front);
+    }
+
+    #[test]
+    fn dashing_steps_twice_as_fast() {
+        assert_eq!(walk_frame(0.0, Movement::Walk), 1);
+        assert_eq!(walk_frame(0.125, Movement::Walk), 2);
+        assert_eq!(walk_frame(0.125, Movement::Dash), 3);
+    }
+
+    #[test]
+    fn rows_of_the_sheet_follow_the_facing() {
+        assert!(sheet_row(Facing::Front).abs() < 1e-9);
+        assert!((sheet_row(Facing::Back) - 1.0).abs() < 1e-9);
+        assert!((sheet_row(Facing::Side) - 2.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn the_smoke_leaves_then_lands() {
+        assert_eq!(
+            Puff::at(0.0),
+            Puff {
+                leaving: true,
+                spread: 0.0,
+                alpha: 0.9
+            }
+        );
+        let landing = Puff::at(0.75);
+        assert!(!landing.leaving);
+        assert!((landing.spread - 0.5).abs() < 1e-9);
+        assert!((landing.alpha - 0.9 * 0.7).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_crack_wanders_by_a_pixel_at_most() {
+        let steps: Vec<f64> = (0..200)
+            .map(|s| crack_step(hash32("lead:abc"), f64::from(s), 1.0))
+            .collect();
+        assert!(steps.contains(&0.0) && steps.contains(&1.0) && steps.contains(&-1.0));
+    }
+
+    #[test]
+    fn effects_only_play_in_the_middle_of_the_pause() {
+        assert_eq!(effect_progress(0.05), None);
+        assert_eq!(effect_progress(0.5), Some(0.5));
+        assert_eq!(effect_progress(0.95), None);
+    }
+
+    fn scene(frames: u32) -> SessionScene {
+        SessionScene {
+            room: PictureRef::new("/room.png"),
+            frames,
+            fps: 8,
+            walk: (14, 64, 164, 50),
+            actors: vec![Actor {
+                id: "lead:abc".into(),
+                name: "Cyclops".into(),
+                sprite: PictureRef::new("/cyclops.png"),
+                movement: "walk".into(),
+                power: "beam".into(),
+                colour: "#FF2A2A".into(),
+                aura: None,
+                state: ActorState::Walking,
+            }],
+        }
+    }
+
+    fn session(scene: Option<SessionScene>) -> Session {
+        Session {
+            name: "errol-8b".into(),
+            project: Some("~/personal/errol".into()),
+            status: SessionStatus::Waiting,
+            since: Some(errol_domain::entities::Timestamp(1_000)),
+            room: Some("Danger Room".into()),
+            lead: Some("Cyclops".into()),
+            agents: 0,
+            scene,
+        }
+    }
+
+    #[test]
+    fn the_room_turns_its_frames() {
+        assert!(room_frame(&scene(1), 3.0).abs() < 1e-9);
+        assert!((room_frame(&scene(16), 1.0) - 8.0).abs() < 1e-9);
+        assert!((room_frame(&scene(16), 3.0) - 8.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn only_actors_with_a_sheet_are_cast() {
+        let scene = scene(16);
+        assert!(cast(&scene, vec![None], 3.0).is_empty());
+        let mut canvas = femtovg::Canvas::new(femtovg::renderer::Void).expect("a canvas");
+        let sheet = canvas
+            .create_image_empty(
+                96,
+                72,
+                femtovg::PixelFormat::Rgba8,
+                femtovg::ImageFlags::empty(),
+            )
+            .expect("an image");
+        assert_eq!(cast(&scene, vec![Some(sheet)], 3.0).len(), 1);
+    }
+
+    #[test]
+    fn the_card_names_the_cast_else_the_lead() {
+        assert_eq!(cast_names(&session(Some(scene(16)))), "Cyclops");
+        let mut alone = session(None);
+        assert_eq!(cast_names(&alone), "Cyclops");
+        alone.lead = None;
+        assert_eq!(cast_names(&alone), "");
+    }
+
+    #[test]
+    fn the_card_says_its_status_and_for_how_long() {
+        assert_eq!(status_line(&session(None), 43_000), "needs you 42s");
+        let mut busy = session(None);
+        (busy.status, busy.since) = (SessionStatus::Busy, None);
+        assert_eq!(status_line(&busy, 43_000), "busy 0s");
+        busy.status = SessionStatus::Idle;
+        assert_eq!(status_line(&busy, 43_000), "idle 0s");
+    }
+
+    #[test]
+    fn an_idle_card_has_a_faint_border() {
+        assert_eq!(
+            border_colour(SessionStatus::Idle),
+            fade(Color::white(), 0.08)
+        );
+        assert_eq!(border_colour(SessionStatus::Busy), fade(rgb(BUSY), 0.7));
+        assert_eq!(status_colour(SessionStatus::Waiting), rgb(WAITING));
+        assert_eq!(status_colour(SessionStatus::Idle), rgb(IDLE));
+    }
+
+    #[test]
+    fn colours_read_both_hex_forms() {
+        assert_eq!(hex("#FF2A2A"), rgb(0xff2a2a));
+        assert_eq!(hex("#f0a"), rgb(0xff00aa));
+        assert_eq!(hex("nope"), Color::white());
+    }
+
+    #[test]
+    fn cards_scale_with_their_scene() {
+        assert_eq!(measures(2.0), (10.0, 8.0, 15.0, 12.0));
+        assert_eq!(measures(0.2), (5.5, 4.4, 8.25, 6.6000004));
     }
 
     const HASH_LEAD_ABC: u32 = 1_030_476_213;
