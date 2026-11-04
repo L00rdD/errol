@@ -116,6 +116,13 @@ impl DemoFeedSource {
 
 /// The timeline: when each event happens in a cycle.
 fn timeline() -> Vec<(f64, DemoScene, EventKind)> {
+    let mut timeline = house_timeline();
+    timeline.extend(news_timeline());
+    timeline
+}
+
+/// The house's part of the evening: the neon, the screen, the projector.
+fn house_timeline() -> Vec<(f64, DemoScene, EventKind)> {
     vec![
         (
             6.0,
@@ -143,6 +150,12 @@ fn timeline() -> Vec<(f64, DemoScene, EventKind)> {
                 app: Some("Jellyfin".into()),
             },
         ),
+    ]
+}
+
+/// The news of the evening: the Mac, the media, One Piece, the printer.
+fn news_timeline() -> Vec<(f64, DemoScene, EventKind)> {
+    vec![
         (
             122.0,
             DemoScene::Cerebro,
@@ -247,208 +260,244 @@ fn film(position: f64, paused: bool) -> Playing {
 fn base(now: Timestamp) -> Snapshot {
     Snapshot {
         updated_at: now,
-        house: Some(House {
-            outlets: vec![
-                Outlet {
-                    id: "floor-lamp".into(),
-                    name: "Lampadaire".into(),
-                    on: true,
-                },
-                Outlet {
-                    id: "neon".into(),
-                    name: "Néon".into(),
-                    on: false,
-                },
-            ],
-            covers: vec![Cover {
-                id: "screen".into(),
-                name: "Écran".into(),
-                position: 0.0,
-                moving: false,
-            }],
-            projectors: vec![Projector {
-                id: "projector".into(),
-                name: "Projecteur".into(),
-                on: false,
-                app: None,
-            }],
-        }),
+        house: Some(demo_house()),
         downloads: vec![Download {
             name: "Dune.Part.Two.2024.1080p.BluRay.x265".into(),
             percent: 63.4,
             eta: Some(1260.0),
         }],
-        recent: vec![
-            Import {
-                kind: MediaKind::Movie,
-                title: "Mission: Impossible - Dead Reckoning".into(),
-                year: Some(2023),
-                season: None,
-                episode: None,
-                episode_title: None,
-                quality: None,
-                poster: Some(PictureRef::new(format!(
-                    "{TMDB}w342/NNxYkU70HPurnNCSiCjYAmacwm.jpg"
-                ))),
-            },
-            arcane(),
-        ],
-        one_piece: Some(OnePiece {
-            latest: Chapter {
-                number: 1196,
-                name: "L'amour de ceux qui veulent mourir n'a aucune valeur".into(),
-                arc: Some("Elbaf".into()),
-                pages: Some(17),
-            },
-            next: Some(NextChapter {
-                number: 1197,
-                at: now.plus_secs(2.8 * 86_400.0),
-            }),
-        }),
-        portfolio: Some(Portfolio {
-            name: "Bot".into(),
-            mode: "paper".into(),
-            equity: 1087.42,
-            initial: 1000.0,
-            trades: 12,
-            positions: vec![
-                Position {
-                    pair: "BTC/USDT".into(),
-                    average_price: 60_000.0,
-                    price: Some(63_150.0),
-                },
-                Position {
-                    pair: "ETH/USDT".into(),
-                    average_price: 3_000.0,
-                    price: Some(2_910.0),
-                },
-                Position {
-                    pair: "SOL/USDT".into(),
-                    average_price: 140.0,
-                    price: Some(151.2),
-                },
-            ],
-        }),
+        recent: demo_recent(),
+        one_piece: Some(demo_one_piece(now)),
+        portfolio: Some(demo_portfolio()),
         disk: Some(Disk {
             total: 1_430_000_000_000,
             used: 980_000_000_000,
             free: 450_000_000_000,
         }),
         services: Services { up: 18, total: 18 },
-        cerebro: Some(Cerebro {
-            room_size: (192, 120),
-            character_size: (24, 24),
-            emotes: Some(cerebro_sprite("ui/emotes.png")),
-            sessions: vec![
-                Session {
-                    name: "errol-8b".into(),
-                    project: Some("~/personal/errol".into()),
-                    status: SessionStatus::Busy,
-                    since: Some(now.plus_secs(-754.0)),
-                    room: Some("Danger Room".into()),
-                    lead: Some("Cyclops".into()),
-                    agents: 1,
-                    scene: Some(room(
-                        "danger-room",
-                        16,
-                        (14, 64, 164, 50),
-                        vec![
-                            actor(
-                                "lead:demo-errol",
-                                "cyclops",
-                                "Cyclops",
-                                "walk",
-                                "beam",
-                                "#FF2A2A",
-                                None,
-                                ActorState::Walking,
-                            ),
-                            actor(
-                                "agent:demo-errol-1",
-                                "wolverine",
-                                "Wolverine",
-                                "walk",
-                                "claws",
-                                "#E8E8F0",
-                                None,
-                                ActorState::Walking,
-                            ),
-                        ],
-                    )),
-                },
-                Session {
-                    name: "skylink-41".into(),
-                    project: Some("~/dronevolt/skylink".into()),
-                    status: SessionStatus::Busy,
-                    since: Some(now.plus_secs(-2_410.0)),
-                    room: Some("Rooftop Helipad".into()),
-                    lead: Some("Storm".into()),
-                    agents: 2,
-                    scene: Some(room(
-                        "rooftop",
-                        16,
-                        (14, 54, 164, 60),
-                        vec![
-                            actor(
-                                "lead:demo-skylink",
-                                "storm",
-                                "Storm",
-                                "fly",
-                                "bolt",
-                                "#F4F4FF",
-                                Some("#BFE6FF"),
-                                ActorState::Walking,
-                            ),
-                            actor(
-                                "agent:demo-skylink-1",
-                                "nightcrawler",
-                                "Nightcrawler",
-                                "teleport",
-                                "leap",
-                                "#8A6AE0",
-                                None,
-                                ActorState::Walking,
-                            ),
-                            actor(
-                                "agent:demo-skylink-2",
-                                "northstar",
-                                "Northstar",
-                                "dash",
-                                "sparks",
-                                "#F4F4F4",
-                                Some("#F4F4F4"),
-                                ActorState::Walking,
-                            ),
-                        ],
-                    )),
-                },
-                Session {
-                    name: "pensieve-3c".into(),
-                    project: Some("~/personal/pensieve".into()),
-                    status: SessionStatus::Idle,
-                    since: None,
-                    room: Some("Library".into()),
-                    lead: Some("Beast".into()),
-                    agents: 0,
-                    scene: Some(room(
-                        "library",
-                        1,
-                        (12, 66, 168, 48),
-                        vec![actor(
-                            "lead:demo-pensieve",
-                            "beast",
-                            "Beast",
-                            "walk",
-                            "leap",
-                            "#FFFFFF",
-                            None,
-                            ActorState::Asleep,
-                        )],
-                    )),
-                },
-            ],
-        }),
+        cerebro: Some(demo_cerebro(now)),
         ..Snapshot::default()
+    }
+}
+
+/// The lamps on, the neon off, the screen up, the projector off.
+fn demo_house() -> House {
+    House {
+        outlets: vec![
+            Outlet {
+                id: "floor-lamp".into(),
+                name: "Lampadaire".into(),
+                on: true,
+            },
+            Outlet {
+                id: "neon".into(),
+                name: "Néon".into(),
+                on: false,
+            },
+        ],
+        covers: vec![Cover {
+            id: "screen".into(),
+            name: "Écran".into(),
+            position: 0.0,
+            moving: false,
+        }],
+        projectors: vec![Projector {
+            id: "projector".into(),
+            name: "Projecteur".into(),
+            on: false,
+            app: None,
+        }],
+    }
+}
+
+/// What entered the library last.
+fn demo_recent() -> Vec<Import> {
+    vec![
+        Import {
+            kind: MediaKind::Movie,
+            title: "Mission: Impossible - Dead Reckoning".into(),
+            year: Some(2023),
+            season: None,
+            episode: None,
+            episode_title: None,
+            quality: None,
+            poster: Some(PictureRef::new(format!(
+                "{TMDB}w342/NNxYkU70HPurnNCSiCjYAmacwm.jpg"
+            ))),
+        },
+        arcane(),
+    ]
+}
+
+/// The latest chapter, the next in under three days.
+fn demo_one_piece(now: Timestamp) -> OnePiece {
+    OnePiece {
+        latest: Chapter {
+            number: 1196,
+            name: "L'amour de ceux qui veulent mourir n'a aucune valeur".into(),
+            arc: Some("Elbaf".into()),
+            pages: Some(17),
+        },
+        next: Some(NextChapter {
+            number: 1197,
+            at: now.plus_secs(2.8 * 86_400.0),
+        }),
+    }
+}
+
+/// The trading bot, a little up.
+fn demo_portfolio() -> Portfolio {
+    Portfolio {
+        name: "Bot".into(),
+        mode: "paper".into(),
+        equity: 1087.42,
+        initial: 1000.0,
+        trades: 12,
+        positions: vec![
+            Position {
+                pair: "BTC/USDT".into(),
+                average_price: 60_000.0,
+                price: Some(63_150.0),
+            },
+            Position {
+                pair: "ETH/USDT".into(),
+                average_price: 3_000.0,
+                price: Some(2_910.0),
+            },
+            Position {
+                pair: "SOL/USDT".into(),
+                average_price: 140.0,
+                price: Some(151.2),
+            },
+        ],
+    }
+}
+
+/// Three sessions on the Mac.
+fn demo_cerebro(now: Timestamp) -> Cerebro {
+    Cerebro {
+        room_size: (192, 120),
+        character_size: (24, 24),
+        emotes: Some(cerebro_sprite("ui/emotes.png")),
+        sessions: vec![errol_session(now), skylink_session(now), pensieve_session()],
+    }
+}
+
+/// The session that asks for an answer later in the evening.
+fn errol_session(now: Timestamp) -> Session {
+    Session {
+        name: "errol-8b".into(),
+        project: Some("~/personal/errol".into()),
+        status: SessionStatus::Busy,
+        since: Some(now.plus_secs(-754.0)),
+        room: Some("Danger Room".into()),
+        lead: Some("Cyclops".into()),
+        agents: 1,
+        scene: Some(room(
+            "danger-room",
+            16,
+            (14, 64, 164, 50),
+            vec![
+                actor(
+                    "lead:demo-errol",
+                    "cyclops",
+                    "Cyclops",
+                    "walk",
+                    "beam",
+                    "#FF2A2A",
+                    None,
+                    ActorState::Walking,
+                ),
+                actor(
+                    "agent:demo-errol-1",
+                    "wolverine",
+                    "Wolverine",
+                    "walk",
+                    "claws",
+                    "#E8E8F0",
+                    None,
+                    ActorState::Walking,
+                ),
+            ],
+        )),
+    }
+}
+
+/// A busy session with two agents.
+fn skylink_session(now: Timestamp) -> Session {
+    Session {
+        name: "skylink-41".into(),
+        project: Some("~/dronevolt/skylink".into()),
+        status: SessionStatus::Busy,
+        since: Some(now.plus_secs(-2_410.0)),
+        room: Some("Rooftop Helipad".into()),
+        lead: Some("Storm".into()),
+        agents: 2,
+        scene: Some(room(
+            "rooftop",
+            16,
+            (14, 54, 164, 60),
+            vec![
+                actor(
+                    "lead:demo-skylink",
+                    "storm",
+                    "Storm",
+                    "fly",
+                    "bolt",
+                    "#F4F4FF",
+                    Some("#BFE6FF"),
+                    ActorState::Walking,
+                ),
+                actor(
+                    "agent:demo-skylink-1",
+                    "nightcrawler",
+                    "Nightcrawler",
+                    "teleport",
+                    "leap",
+                    "#8A6AE0",
+                    None,
+                    ActorState::Walking,
+                ),
+                actor(
+                    "agent:demo-skylink-2",
+                    "northstar",
+                    "Northstar",
+                    "dash",
+                    "sparks",
+                    "#F4F4F4",
+                    Some("#F4F4F4"),
+                    ActorState::Walking,
+                ),
+            ],
+        )),
+    }
+}
+
+/// A session asleep in the library.
+fn pensieve_session() -> Session {
+    Session {
+        name: "pensieve-3c".into(),
+        project: Some("~/personal/pensieve".into()),
+        status: SessionStatus::Idle,
+        since: None,
+        room: Some("Library".into()),
+        lead: Some("Beast".into()),
+        agents: 0,
+        scene: Some(room(
+            "library",
+            1,
+            (12, 66, 168, 48),
+            vec![actor(
+                "lead:demo-pensieve",
+                "beast",
+                "Beast",
+                "walk",
+                "leap",
+                "#FFFFFF",
+                None,
+                ActorState::Asleep,
+            )],
+        )),
     }
 }
 
