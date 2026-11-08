@@ -52,7 +52,7 @@ pub fn run(options: &Options, observe: &ObserveFeed, pictures: &Pictures) -> Res
         look: options.look,
         map: None,
         map_failed: false,
-        stage: Stage::new(options.look),
+        stage: Stage::new(options.look).with_night(options.night),
         textures: Textures::new(pictures),
     };
     let events = display.sdl.event_pump()?;
@@ -97,7 +97,8 @@ fn open_canvas(sdl: &Sdl, video: &VideoSubsystem) -> Result<Canvas<OpenGl>, Stri
     Canvas::new(renderer).map_err(|error| format!("femtovg: {error:?}"))
 }
 
-/// The frame loop, paced at `fps`, until the window closes or the shot is taken.
+/// The frame loop, paced at `fps` (or lower when the stage asks it, asleep),
+/// until the window closes or the shot is taken.
 fn frames(
     options: &Options,
     observe: &ObserveFeed,
@@ -106,7 +107,6 @@ fn frames(
     mut events: EventPump,
 ) -> Result<(), String> {
     let start = Instant::now();
-    let frame = Duration::from_secs_f64(1.0 / f64::from(options.fps));
     let mut last = start;
     loop {
         let tick = Instant::now();
@@ -121,10 +121,17 @@ fn frames(
             return save_shot(&mut display.canvas, path);
         }
         display.window.gl_swap_window();
+        let frame = frame_length(options.fps, screen.stage.fps_cap());
         if let Some(rest) = frame.checked_sub(tick.elapsed()) {
             std::thread::sleep(rest);
         }
     }
+}
+
+/// How long a frame lasts at `fps`, or at the stage's `cap` when it is lower.
+fn frame_length(fps: u32, cap: Option<u32>) -> Duration {
+    let fps = cap.map_or(fps, |cap| cap.min(fps)).max(1);
+    Duration::from_secs_f64(1.0 / f64::from(fps))
 }
 
 /// Where to save the screen, once `t` seconds have gone by.
@@ -404,6 +411,13 @@ mod tests {
     #[test]
     fn without_a_shot_the_screen_goes_on() {
         assert_eq!(shot_due(&options(None), 60.0), None);
+    }
+
+    #[test]
+    fn asleep_the_frames_last_longer() {
+        assert_eq!(frame_length(30, None), Duration::from_secs_f64(1.0 / 30.0));
+        assert_eq!(frame_length(30, Some(5)), Duration::from_millis(200));
+        assert_eq!(frame_length(4, Some(5)), Duration::from_millis(250));
     }
 
     #[test]

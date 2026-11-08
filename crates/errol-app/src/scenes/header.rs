@@ -1,10 +1,11 @@
-//! The bar at the top: the AI's name, the mode, three status chips, the time.
+//! The bar at the top: the AI's name, the mode, three status chips, the
+//! weather, the time.
 
-use errol_domain::entities::Snapshot;
+use errol_domain::entities::{Snapshot, Timestamp, Weather};
 use errol_domain::strategies::Scene;
 use errol_domain::usecases::View;
 
-use super::text;
+use super::{cards, text};
 use crate::look::{Look, fade};
 use crate::render::{Anchor, Face, Gfx, Type};
 
@@ -19,6 +20,9 @@ const BRAND_HOGWARTS_TYPE: Type = Type::new(Face::Italic, 17.0).spaced(0.5);
 const MIDDLE: f32 = 19.0;
 const CHIP_LABEL: Type = Type::new(Face::Strong, 10.5).spaced(1.4);
 const CHIP_VALUE: Type = Type::new(Face::Bold, 11.5);
+const WEATHER: Type = Type::new(Face::Display, 12.5).spaced(0.5);
+/// Where the chips end, left of the clock.
+const CHIPS_END: f32 = 726.0;
 
 /// A status chip: a label, its value, a light that is on when all is well,
 /// and the play triangle of a projector that is on.
@@ -46,7 +50,10 @@ pub fn draw(gfx: &mut Gfx, view: &View) {
     let Some(snapshot) = &view.snapshot else {
         return;
     };
-    let mut x = 726.0;
+    let mut x = CHIPS_END;
+    if let Some(weather) = &snapshot.weather {
+        x = draw_weather(gfx, x - 8.0, weather, view.now) - 4.0;
+    }
     for chip in chips(snapshot).iter().rev() {
         let width = chip_width(gfx, chip);
         x -= width + 8.0;
@@ -152,9 +159,31 @@ fn draw_mode(gfx: &mut Gfx, view: &View, brand_end: f32) {
     );
 }
 
+/// The weather by the clock, its right edge at `right`: the sky's small
+/// glyph and the temperature. Returns where it starts.
+fn draw_weather(gfx: &mut Gfx, right: f32, weather: &Weather, now: Timestamp) -> f32 {
+    let width = cards::degrees_width(gfx, weather.temperature, WEATHER);
+    let colour = gfx.palette.text;
+    let figure = (weather.temperature.round() as i64).to_string();
+    let y = MIDDLE + 0.5;
+    let drawn = gfx.text(
+        right - width,
+        y,
+        &figure,
+        WEATHER,
+        colour,
+        Anchor::MIDDLE_LEFT,
+    );
+    cards::degree_ring(gfx, (right - width + drawn, y), WEATHER, colour);
+    let glyph = right - width - 14.0;
+    let night = weather.daylight(now) == Some(false);
+    cards::sky_icon(gfx, (glyph, MIDDLE, 10.0), weather.sky(), night);
+    glyph - 12.0
+}
+
 /// The three chips, left to right: services up, downloads, lamps on.
 fn chips(snapshot: &Snapshot) -> [Chip; 3] {
-    let services = snapshot.services;
+    let services = &snapshot.services;
     let lamps = snapshot
         .house
         .as_ref()
@@ -309,7 +338,11 @@ mod tests {
             ]
         );
         let snapshot = Snapshot {
-            services: Services { up: 18, total: 18 },
+            services: Services {
+                up: 18,
+                total: 18,
+                down: vec![],
+            },
             downloads: vec![Download {
                 name: "Dune".into(),
                 percent: 1.0,
@@ -321,11 +354,13 @@ mod tests {
                         id: "a".into(),
                         name: "A".into(),
                         on: true,
+                        next: None,
                     },
                     Outlet {
                         id: "b".into(),
                         name: "B".into(),
                         on: false,
+                        next: None,
                     },
                 ],
                 covers: Vec::new(),
@@ -334,6 +369,7 @@ mod tests {
                     name: "P".into(),
                     on: true,
                     app: None,
+                    closes_at: None,
                 }],
             }),
             ..Snapshot::default()

@@ -1,23 +1,42 @@
 //! The idle recap: a clock in its rings (the Time-Turner on the Map), and a
-//! carousel of cards (One Piece, a trading bot, the house, the Claude Code
-//! sessions of the Mac, downloads, the print on the resin printer, the latest
-//! additions, the server), rooms of the castle on the Map.
+//! carousel of cards (One Piece, a trading bot, the house, the weather, the
+//! episodes to watch, the Claude Code sessions of the Mac, downloads, the
+//! print on the resin printer, the latest additions, the day's recap, the
+//! server), rooms of the castle on the Map. The carousel weighs its cards:
+//! what has news comes sooner and stays longer, what has nothing to say waits.
 
+use std::cmp::Reverse;
 use std::f32::consts::TAU;
 
 use errol_domain::entities::{
-    Disk, Download, House, Import, MediaKind, NextChapter, Portfolio, Services, Snapshot,
+    Disk, Download, House, Import, MediaKind, NextChapter, PictureRef, Portfolio, Printer,
+    Services, Snapshot, Timestamp,
 };
 use errol_domain::usecases::View;
 use femtovg::Color;
 
-use super::{BOTTOM, TOP, printer, text, turner, xmansion};
+use super::{BOTTOM, TOP, cards, printer, text, turner, xmansion};
 use crate::anim::{decode, ease_out, progress};
 use crate::look::{Palette, fade, mix};
 use crate::render::{Anchor, Face, Finish, Gfx, Textures, Type, ink};
 
-/// Seconds a card stays.
-const CARD_TIME: f32 = 7.0;
+/// Seconds an important card stays, and a routine one.
+const IMPORTANT_TIME: f32 = 10.0;
+const ROUTINE_TIME: f32 = 6.0;
+/// Turns between two showings of a server with nothing to report.
+const SERVER_EVERY: usize = 5;
+/// The share of the disk that must stay free.
+const DISK_FREE: f64 = 0.15;
+/// Seconds before the end of a print, and after it, while the printer
+/// comes every other turn.
+const PRINT_CLOSE: f64 = 600.0;
+/// How far the portfolio must have moved since it was last shown to be
+/// favoured, in percent.
+const PORTFOLIO_MOVE: f64 = 2.0;
+/// Seconds before an episode airs when its card is favoured.
+const AIRS_SOON: f64 = 3.0 * 3600.0;
+/// The hour from which the day's recap is favoured.
+const EVENING: u32 = 18;
 /// Seconds a card takes to slide in or out.
 const SLIDE: f32 = 0.8;
 const CARD_X: f32 = 286.0;
@@ -37,23 +56,29 @@ enum Card {
     OnePiece,
     Portfolio,
     House,
+    Weather,
+    Tonight,
     Cerebro,
     Downloads,
     Printer,
     Recent,
+    Today,
     Server,
 }
 
 impl Card {
-    #[cfg(test)]
-    const ALL: [Self; 8] = [
+    /// Every card, in the order the carousel first shows them.
+    const ALL: [Self; 11] = [
         Self::OnePiece,
         Self::Portfolio,
         Self::House,
+        Self::Weather,
+        Self::Tonight,
         Self::Cerebro,
         Self::Downloads,
         Self::Printer,
         Self::Recent,
+        Self::Today,
         Self::Server,
     ];
 
@@ -63,10 +88,13 @@ impl Card {
             Self::OnePiece => one_piece_card,
             Self::Portfolio => portfolio_card,
             Self::House => house_card,
+            Self::Weather => cards::weather_card,
+            Self::Tonight => cards::tonight_card,
             Self::Cerebro => cerebro_card,
             Self::Downloads => downloads_card,
             Self::Printer => printer_card,
             Self::Recent => recent_card,
+            Self::Today => cards::today_card,
             Self::Server => server_card,
         }
     }
@@ -77,56 +105,265 @@ impl Card {
             Self::OnePiece => "Bibliothèque",
             Self::Portfolio => "Cachots",
             Self::House => "Grande Salle",
+            Self::Weather => "Tour de divination",
+            Self::Tonight => "Salle commune",
             Self::Cerebro => "Bureau de Dumbledore",
             Self::Downloads => "Volière",
             Self::Printer => "Classe de Potions",
             Self::Recent => "Salle sur Demande",
+            Self::Today => "Salle des trophées",
             Self::Server => "Tour d'astronomie",
+        }
+    }
+
+    /// The card has something to say about `snapshot` at `now`.
+    fn says_something(self, snapshot: &Snapshot, now: Timestamp) -> bool {
+        match self {
+            Self::OnePiece => snapshot.one_piece.is_some(),
+            Self::Portfolio => snapshot.portfolio.is_some(),
+            Self::House => snapshot.house.is_some(),
+            Self::Weather => snapshot.weather.is_some(),
+            Self::Tonight => !cards::lineup(snapshot, now).is_empty(),
+            Self::Cerebro => snapshot
+                .cerebro
+                .as_ref()
+                .is_some_and(|cerebro| !cerebro.sessions.is_empty()),
+            Self::Downloads => !snapshot.downloads.is_empty(),
+            Self::Printer => snapshot.printer.is_some(),
+            Self::Recent => snapshot.recent.iter().any(|import| import.poster.is_some()),
+            Self::Today => snapshot.today.is_some_and(|today| !today.is_empty()),
+            Self::Server => snapshot.disk.is_some(),
         }
     }
 }
 
+/// The cards with something to say, in the carousel's order.
+fn cards(snapshot: &Snapshot, now: Timestamp) -> Vec<Card> {
+    Card::ALL
+        .into_iter()
+        .filter(|card| card.says_something(snapshot, now))
+        .collect()
+}
+
+/// How much a card wants the next turn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Weight {
+    /// Nothing new: it takes its turn, and stays a short while.
+    Routine,
+    /// Worth seeing: it comes back sooner, and stays longer.
+    Favoured,
+    /// It comes next, and stays longer.
+    First,
+}
+
+impl Weight {
+    /// The turns of waiting the weight is worth.
+    fn bonus(self) -> usize {
+        match self {
+            Self::Routine => 0,
+            Self::Favoured => 3,
+            Self::First => 1000,
+        }
+    }
+
+    /// Seconds a card of this weight stays.
+    fn time(self) -> f32 {
+        if self == Self::Routine {
+            ROUTINE_TIME
+        } else {
+            IMPORTANT_TIME
+        }
+    }
+
+    /// Favoured when `news`, else routine.
+    fn favoured(news: bool) -> Self {
+        if news { Self::Favoured } else { Self::Routine }
+    }
+}
+
+/// What the carousel remembers to weigh the next card.
+#[derive(Debug, Default)]
+struct Memory {
+    /// Turns taken.
+    turn: usize,
+    /// The turn each card was last shown at.
+    shown: [Option<usize>; Card::ALL.len()],
+    /// The portfolio's equity when it was last shown.
+    equity: Option<f64>,
+    /// The house's switches as last seen.
+    house: Option<Vec<bool>>,
+    /// They changed since the house was last shown.
+    house_changed: bool,
+    /// The printer was printing when last seen.
+    printing: bool,
+    /// When its last print ended.
+    print_done: Option<Timestamp>,
+}
+
+/// The house's switches: each outlet on, each cover down, each projector on.
+fn switches(house: &House) -> Vec<bool> {
+    house
+        .outlets
+        .iter()
+        .map(|outlet| outlet.on)
+        .chain(house.covers.iter().map(|cover| cover.position > 0.0))
+        .chain(house.projectors.iter().map(|projector| projector.on))
+        .collect()
+}
+
+impl Memory {
+    /// Notices what changed since the last frame: the house, the end of a print.
+    fn observe(&mut self, snapshot: &Snapshot, now: Timestamp) {
+        if let Some(house) = snapshot.house.as_ref().map(switches) {
+            self.house_changed |= self.house.as_ref().is_some_and(|seen| *seen != house);
+            self.house = Some(house);
+        }
+        let printing = snapshot.printer.as_ref().is_some_and(|p| p.active);
+        if self.printing && !printing {
+            self.print_done = Some(now);
+        }
+        self.printing = printing;
+    }
+
+    /// Turns waited since `card` was last shown; a card never shown waits
+    /// longer than any other, so that each comes once before any comes back.
+    fn waited(&self, card: Card) -> usize {
+        self.shown[card as usize].map_or(self.turn + Card::ALL.len(), |turn| self.turn - turn)
+    }
+
+    /// `card` is shown: it starts waiting again, and what it showed is seen.
+    fn remember(&mut self, card: Card, snapshot: &Snapshot) {
+        self.shown[card as usize] = Some(self.turn);
+        self.turn += 1;
+        match card {
+            Card::House => self.house_changed = false,
+            Card::Portfolio => self.equity = snapshot.portfolio.as_ref().map(|p| p.equity),
+            _ => {}
+        }
+    }
+
+    /// How much `card` wants the next turn; None when it must wait.
+    fn weight(&self, card: Card, snapshot: &Snapshot, now: Timestamp) -> Option<Weight> {
+        Some(match card {
+            Card::House if self.house_changed => Weight::First,
+            Card::Printer => self.printer_weight(snapshot.printer.as_ref()?, now),
+            Card::OnePiece => Weight::favoured(release_day(snapshot, now)),
+            Card::Portfolio => Weight::favoured(self.portfolio_moved(snapshot)),
+            Card::Tonight => Weight::favoured(airs_soon(snapshot, now)),
+            Card::Today => Weight::favoured(chrono::Timelike::hour(&text::local(now)) >= EVENING),
+            Card::Server => self.server_weight(snapshot)?,
+            _ => Weight::Routine,
+        })
+    }
+
+    /// The printer comes every other turn while its print nears its end, and
+    /// just after.
+    fn printer_weight(&self, printer: &Printer, now: Timestamp) -> Weight {
+        let closing = printer.active && printer.remaining.is_some_and(|left| left < PRINT_CLOSE);
+        let finished = self
+            .print_done
+            .is_some_and(|done| now.secs_since(done) < PRINT_CLOSE);
+        if closing || finished {
+            Weight::First
+        } else {
+            Weight::Routine
+        }
+    }
+
+    /// The portfolio moved more than `PORTFOLIO_MOVE` since it was last shown.
+    fn portfolio_moved(&self, snapshot: &Snapshot) -> bool {
+        match (&snapshot.portfolio, self.equity) {
+            (Some(portfolio), Some(seen)) if seen > 0.0 => {
+                ((portfolio.equity / seen - 1.0) * 100.0).abs() > PORTFOLIO_MOVE
+            }
+            _ => false,
+        }
+    }
+
+    /// The server is favoured when something is wrong; otherwise it waits
+    /// `SERVER_EVERY` turns between two showings.
+    fn server_weight(&self, snapshot: &Snapshot) -> Option<Weight> {
+        if server_alarm(snapshot) {
+            return Some(Weight::Favoured);
+        }
+        let due =
+            self.shown[Card::Server as usize].map_or(SERVER_EVERY - 1, |turn| turn + SERVER_EVERY);
+        (self.turn >= due).then_some(Weight::Routine)
+    }
+}
+
+/// The next One Piece chapter is out within a day.
+fn release_day(snapshot: &Snapshot, now: Timestamp) -> bool {
+    snapshot
+        .one_piece
+        .as_ref()
+        .and_then(|one_piece| one_piece.next.as_ref())
+        .is_some_and(|next| (0.0..86_400.0).contains(&next.at.secs_since(now)))
+}
+
+/// An episode airs within `AIRS_SOON`.
+fn airs_soon(snapshot: &Snapshot, now: Timestamp) -> bool {
+    snapshot
+        .airing
+        .iter()
+        .filter_map(|episode| episode.at)
+        .any(|at| (0.0..AIRS_SOON).contains(&at.secs_since(now)))
+}
+
+/// The disk is nearly full, or a service is down.
+fn server_alarm(snapshot: &Snapshot) -> bool {
+    let services = &snapshot.services;
+    let full = snapshot
+        .disk
+        .is_some_and(|disk| (disk.free as f64) < disk.total as f64 * DISK_FREE);
+    full || !services.down.is_empty() || services.up < services.total
+}
+
+/// The card to show next and its weight: of those that may come, the one
+/// that waited longest, its weight counted as turns of waiting; never the
+/// one shown now while another can come; the first in the list on a tie.
+fn pick(
+    list: &[Card],
+    current: Option<Card>,
+    snapshot: &Snapshot,
+    memory: &Memory,
+    now: Timestamp,
+) -> (Card, Weight) {
+    list.iter()
+        .enumerate()
+        .filter(|(_, card)| Some(**card) != current)
+        .filter_map(|(index, &card)| {
+            let weight = memory.weight(card, snapshot, now)?;
+            Some((card, weight, memory.waited(card) + weight.bonus(), index))
+        })
+        .max_by_key(|&(_, _, score, index)| (score, Reverse(index)))
+        .map_or_else(
+            || {
+                // nothing else may come: the card shown stays, or the first
+                let card = current
+                    .filter(|card| list.contains(card))
+                    .unwrap_or(list[0]);
+                (
+                    card,
+                    memory
+                        .weight(card, snapshot, now)
+                        .unwrap_or(Weight::Routine),
+                )
+            },
+            |(card, weight, _, _)| (card, weight),
+        )
+}
+
 #[derive(Default)]
 pub struct Carousel {
-    /// Rotations done; the card shown is this modulo the cards available.
-    turn: usize,
+    memory: Memory,
+    /// The card shown, since when, and for how long.
+    current: Option<Card>,
     since: f32,
+    stay: f32,
     previous: Option<Card>,
     /// The carousel just turned: footsteps are due from the clock to the card.
     walk_due: bool,
-}
-
-fn cards(snapshot: &Snapshot) -> Vec<Card> {
-    let mut cards = Vec::new();
-    if snapshot.one_piece.is_some() {
-        cards.push(Card::OnePiece);
-    }
-    if snapshot.portfolio.is_some() {
-        cards.push(Card::Portfolio);
-    }
-    if snapshot.house.is_some() {
-        cards.push(Card::House);
-    }
-    if snapshot
-        .cerebro
-        .as_ref()
-        .is_some_and(|cerebro| !cerebro.sessions.is_empty())
-    {
-        cards.push(Card::Cerebro);
-    }
-    if !snapshot.downloads.is_empty() {
-        cards.push(Card::Downloads);
-    }
-    if snapshot.printer.is_some() {
-        cards.push(Card::Printer);
-    }
-    if snapshot.recent.iter().any(|import| import.poster.is_some()) {
-        cards.push(Card::Recent);
-    }
-    if snapshot.disk.is_some() {
-        cards.push(Card::Server);
-    }
-    cards
 }
 
 impl Carousel {
@@ -135,11 +372,11 @@ impl Carousel {
         let Some(snapshot) = &view.snapshot else {
             return;
         };
-        let list = cards(snapshot);
+        let list = cards(snapshot, view.now);
         if list.is_empty() {
             return;
         }
-        let card = self.turn_to(gfx.t, &list);
+        let card = self.turn_to(gfx.t, &list, snapshot, view.now);
         let age = gfx.t - self.since;
         let k = ease_out(progress(age, SLIDE));
         if let Some(previous) = self.previous.filter(|_| age < SLIDE) {
@@ -164,19 +401,31 @@ impl Carousel {
             age,
             textures,
         );
-        dashes(gfx, list.len(), self.turn % list.len());
+        let index = list.iter().position(|c| *c == card).unwrap_or_default();
+        dashes(gfx, list.len(), index);
     }
 
-    /// Turns to the next card once the current one has stayed its time;
-    /// returns the card to show.
-    fn turn_to(&mut self, t: f32, list: &[Card]) -> Card {
-        if t - self.since >= CARD_TIME {
-            self.previous = list.get(self.turn % list.len()).copied();
-            self.turn += 1;
-            self.since = t;
-            self.walk_due = list.len() > 1;
+    /// Turns to the next card once the current one has stayed its time, or
+    /// has nothing more to say; returns the card to show.
+    fn turn_to(&mut self, t: f32, list: &[Card], snapshot: &Snapshot, now: Timestamp) -> Card {
+        self.memory.observe(snapshot, now);
+        if let Some(card) = self.current.filter(|card| list.contains(card))
+            && t - self.since < self.stay
+        {
+            return card;
         }
-        list[self.turn % list.len()]
+        let (card, weight) = pick(list, self.current, snapshot, &self.memory, now);
+        self.memory.remember(card, snapshot);
+        if self.current == Some(card) {
+            // nothing else to show: it stays on, without sliding again
+            self.stay = t - self.since + weight.time();
+        } else {
+            self.previous = self.current.replace(card);
+            self.walk_due = self.previous.is_some();
+            self.since = t;
+            self.stay = weight.time();
+        }
+        card
     }
 
     /// The boxes footsteps should walk between, once, after the carousel
@@ -442,7 +691,7 @@ pub(super) fn big(gfx: &mut Gfx, x: f32, y: f32, value: &str, colour: Color) {
     }
 }
 
-fn heading(gfx: &mut Gfx, x: f32, y: f32, value: &str, age: f32) -> f32 {
+pub(super) fn heading(gfx: &mut Gfx, x: f32, y: f32, value: &str, age: f32) -> f32 {
     let style = if gfx.cyber() {
         Type::new(Face::Bold, 25.0)
     } else {
@@ -611,15 +860,15 @@ pub(super) fn scoreboard(
 }
 
 /// What a card is drawn from, and where its text starts.
-struct Sheet<'a> {
-    snapshot: &'a Snapshot,
-    view: &'a View,
-    left: f32,
-    top: f32,
+pub(super) struct Sheet<'a> {
+    pub(super) snapshot: &'a Snapshot,
+    pub(super) view: &'a View,
+    pub(super) left: f32,
+    pub(super) top: f32,
     /// The colour of the card's kicker.
-    kicker: Color,
+    pub(super) kicker: Color,
     /// Seconds since the card came in.
-    age: f32,
+    pub(super) age: f32,
 }
 
 /// Draws the inside of a card.
@@ -888,11 +1137,78 @@ fn house_card(gfx: &mut Gfx, sheet: &Sheet, _: &mut Textures) {
     gfx.kicker(left, top, "Maison", sheet.kicker);
     heading(gfx, left, top + 24.0, house_heading(house), sheet.age);
     let devices = devices(house);
-    if gfx.hogwarts() {
+    let map = gfx.hogwarts();
+    if map {
         house_boards(gfx, left, top, &devices);
     } else {
         house_tiles(gfx, left, top, &devices);
     }
+    let lines = schedule(house, sheet.view.now);
+    schedule_lines(gfx, left, schedule_top(map, devices.len(), top), &lines);
+}
+
+/// What the house will do next, three things at most: the outlets' next
+/// switches, the projection screen going back up.
+fn schedule(house: &House, now: Timestamp) -> Vec<String> {
+    let switches = house.outlets.iter().filter_map(|outlet| {
+        let next = outlet.next.filter(|next| next.at > now)?;
+        let verb = if next.on { "s'allume" } else { "s'éteint" };
+        Some(format!(
+            "{} · {verb} {}",
+            outlet.name,
+            text::at_time(next.at, now)
+        ))
+    });
+    let closes = house
+        .projectors
+        .iter()
+        .filter_map(|projector| projector.closes_at.filter(|at| *at > now))
+        .map(|at| format!("La toile remonte {}", text::within(at.secs_since(now))));
+    switches.chain(closes).take(3).collect()
+}
+
+/// Where the schedule starts: under the tiles, two a row, or under the
+/// Map's beams, three plates each.
+fn schedule_top(map: bool, devices: usize, top: f32) -> f32 {
+    let shown = devices.min(6);
+    if map {
+        top + 62.0 + shown.div_ceil(3) as f32 * 89.0 + 4.0
+    } else {
+        top + 70.0 + shown.div_ceil(2) as f32 * 54.0 + 8.0
+    }
+}
+
+/// The schedule, a small clock before each line.
+fn schedule_lines(gfx: &mut Gfx, left: f32, y: f32, lines: &[String]) {
+    let palette = gfx.palette;
+    let face = if gfx.hogwarts() {
+        Face::Italic
+    } else {
+        Face::Body
+    };
+    for (index, line) in lines.iter().enumerate() {
+        let ly = y + index as f32 * 24.0;
+        small_clock(gfx, left + 7.0, ly + 9.0, palette.accent2);
+        gfx.text(
+            left + 22.0,
+            ly,
+            line,
+            Type::new(face, 16.0),
+            palette.text,
+            Anchor::TOP_LEFT,
+        );
+    }
+}
+
+/// A clock face the size of a letter, at ten past.
+fn small_clock(gfx: &mut Gfx, x: f32, y: f32, colour: Color) {
+    let mut path = femtovg::Path::new();
+    path.circle(x, y, 6.5);
+    path.move_to(x, y);
+    path.line_to(x, y - 4.0);
+    path.move_to(x, y);
+    path.line_to(x + 3.5, y - 1.5);
+    gfx.stroke(&path, colour, 1.3);
 }
 
 fn house_heading(house: &House) -> &'static str {
@@ -1076,7 +1392,7 @@ fn printer_card(gfx: &mut Gfx, sheet: &Sheet, textures: &mut Textures) {
 }
 
 /// A poster's width, height, and the gap to the next.
-const POSTER: (f32, f32, f32) = (100.0, 150.0, 14.0);
+pub(super) const POSTER: (f32, f32, f32) = (100.0, 150.0, 14.0);
 
 /// The latest additions: four posters at most, with their captions.
 fn recent_card(gfx: &mut Gfx, sheet: &Sheet, textures: &mut Textures) {
@@ -1092,20 +1408,26 @@ fn recent_card(gfx: &mut Gfx, sheet: &Sheet, textures: &mut Textures) {
         .take(4)
     {
         let by = top + 34.0;
-        poster(gfx, textures, import, bx, by);
+        poster(gfx, textures, import.poster.as_ref(), bx, by);
         poster_caption(gfx, import, bx, by);
         bx += w + gap;
     }
 }
 
 /// A poster; the Gazette prints its photographs in halftone.
-fn poster(gfx: &mut Gfx, textures: &mut Textures, import: &Import, bx: f32, by: f32) {
+pub(super) fn poster(
+    gfx: &mut Gfx,
+    textures: &mut Textures,
+    picture: Option<&PictureRef>,
+    bx: f32,
+    by: f32,
+) {
     let (w, h, _) = POSTER;
     let palette = gfx.palette;
     let map = gfx.hogwarts();
     let finish = if map { Finish::Print } else { Finish::Plain };
     gfx.rect(bx, by, w, h, fade(palette.accent, 0.06));
-    poster_image(gfx, textures, import, (bx, by), finish);
+    poster_image(gfx, textures, picture, (bx, by), finish);
     if !map {
         gfx.rect_line(bx, by, w, h, fade(palette.accent, 0.3), 1.0);
     }
@@ -1115,15 +1437,12 @@ fn poster(gfx: &mut Gfx, textures: &mut Textures, import: &Import, bx: f32, by: 
 fn poster_image(
     gfx: &mut Gfx,
     textures: &mut Textures,
-    import: &Import,
+    picture: Option<&PictureRef>,
     (bx, by): (f32, f32),
     finish: Finish,
 ) {
     let (w, h, _) = POSTER;
-    let image = import
-        .poster
-        .as_ref()
-        .and_then(|poster| textures.get(gfx.canvas, poster, 200, finish));
+    let image = picture.and_then(|poster| textures.get(gfx.canvas, poster, 200, finish));
     match image {
         Some(image) if finish == Finish::Print => gfx.photo(image, bx, by, w, h, 1.0),
         Some(image) => gfx.picture(image, bx, by, w, h, 1.0),
@@ -1186,7 +1505,7 @@ fn used_share(disk: Disk) -> f64 {
 
 /// The plates of the server's scoreboard: free, used, services up (lit when
 /// they all are).
-fn server_plates(disk: Disk, services: Services) -> [(String, String, bool); 3] {
+fn server_plates(disk: Disk, services: &Services) -> [(String, String, bool); 3] {
     [
         (text::size(disk.free), "libres".to_owned(), true),
         (text::size(disk.used), "occupés".to_owned(), true),
@@ -1209,7 +1528,7 @@ fn warning<'a>(read: Option<&'a str>, feed: &'a [String]) -> Option<&'a str> {
 fn server_map(gfx: &mut Gfx, sheet: &Sheet, disk: Disk) {
     let (left, top) = (sheet.left, sheet.top);
     let palette = gfx.palette;
-    let plates = server_plates(disk, sheet.snapshot.services);
+    let plates = server_plates(disk, &sheet.snapshot.services);
     let used = used_share(disk);
     let y = top + 44.0 + scoreboard(gfx, left, top + 44.0, CARD_W - 44.0, &plates, 3) + 30.0;
     gfx.text(
@@ -1237,19 +1556,7 @@ fn server_map(gfx: &mut Gfx, sheet: &Sheet, disk: Disk) {
         palette.muted,
         Anchor::TOP_RIGHT,
     );
-    let snapshot = sheet.snapshot;
-    if let Some(warning) = warning(sheet.view.warning.as_deref(), &snapshot.warnings) {
-        gfx.paragraph(
-            left,
-            y + 50.0,
-            warning,
-            CARD_W - 44.0,
-            Type::new(Face::Italic, 14.0),
-            18.0,
-            palette.hot,
-            3,
-        );
-    }
+    server_notes(gfx, sheet, y + 50.0, Face::Italic);
 }
 
 /// The free space in big, the disk's gauge, the services in a row.
@@ -1278,7 +1585,7 @@ fn server_plain(gfx: &mut Gfx, sheet: &Sheet, disk: Disk) {
         CARD_W - 44.0,
         used_share(disk) * 100.0,
     );
-    let services = sheet.snapshot.services;
+    let services = &sheet.snapshot.services;
     row(
         gfx,
         left,
@@ -1287,18 +1594,26 @@ fn server_plain(gfx: &mut Gfx, sheet: &Sheet, disk: Disk) {
         &format!("{} / {}", services.up, services.total),
         palette.text,
     );
+    server_notes(gfx, sheet, top + 186.0, Face::Body);
+}
+
+/// The services down, as the server's card names them.
+fn down_note(services: &Services) -> Option<String> {
+    (!services.down.is_empty()).then(|| format!("Hors ligne : {}", services.down.join(", ")))
+}
+
+/// What is wrong, in red under the server's figures: the services down,
+/// then why the feed is incomplete.
+fn server_notes(gfx: &mut Gfx, sheet: &Sheet, mut y: f32, face: Face) {
     let snapshot = sheet.snapshot;
-    if let Some(warning) = warning(sheet.view.warning.as_deref(), &snapshot.warnings) {
-        gfx.paragraph(
-            left,
-            top + 186.0,
-            warning,
-            CARD_W - 44.0,
-            Type::new(Face::Body, 14.0),
-            18.0,
-            palette.hot,
-            3,
-        );
+    let read = warning(sheet.view.warning.as_deref(), &snapshot.warnings);
+    let notes = down_note(&snapshot.services)
+        .into_iter()
+        .chain(read.map(str::to_owned));
+    let hot = gfx.palette.hot;
+    for note in notes {
+        let style = Type::new(face, 14.0);
+        y += gfx.paragraph(sheet.left, y, &note, CARD_W - 44.0, style, 18.0, hot, 2) + 6.0;
     }
 }
 
@@ -1306,7 +1621,7 @@ fn server_plain(gfx: &mut Gfx, sheet: &Sheet, disk: Disk) {
 mod tests {
     use super::*;
     use crate::look::Look;
-    use errol_domain::entities::{Cover, Outlet, Position, Printer, Projector, Timestamp};
+    use errol_domain::entities::{Cover, Episode, Outlet, Position, Projector, Today, Weather};
 
     fn portfolio(equity: f64) -> Portfolio {
         Portfolio {
@@ -1336,34 +1651,100 @@ mod tests {
         }
     }
 
-    #[test]
-    fn the_printer_has_its_card_while_it_is_on() {
-        let mut snapshot = Snapshot {
-            disk: Some(Disk {
-                total: 2,
-                used: 1,
-                free: 1,
-            }),
+    fn disk(free: u64) -> Disk {
+        Disk {
+            total: 100,
+            used: 100 - free,
+            free,
+        }
+    }
+
+    fn healthy() -> Snapshot {
+        Snapshot {
+            disk: Some(disk(50)),
+            services: Services {
+                up: 3,
+                total: 3,
+                down: vec![],
+            },
             ..Snapshot::default()
-        };
-        assert_eq!(cards(&snapshot), [Card::Server]);
+        }
+    }
+
+    fn printing(remaining: f64) -> Printer {
+        Printer {
+            state: Some("printing".into()),
+            active: true,
+            remaining: Some(remaining),
+            ..Printer::default()
+        }
+    }
+
+    /// The cards `memory` picks over `turns` turns, each shown in its turn.
+    fn sequence(
+        list: &[Card],
+        snapshot: &Snapshot,
+        memory: &mut Memory,
+        turns: usize,
+    ) -> Vec<Card> {
+        let mut current = None;
+        (0..turns)
+            .map(|_| {
+                let (card, _) = pick(list, current, snapshot, memory, Timestamp(0));
+                memory.remember(card, snapshot);
+                current = Some(card);
+                card
+            })
+            .collect()
+    }
+
+    #[test]
+    fn only_the_cards_with_something_to_say_come() {
+        let mut snapshot = healthy();
+        assert_eq!(cards(&snapshot, Timestamp(0)), [Card::Server]);
         snapshot.printer = Some(Printer::default());
-        assert_eq!(cards(&snapshot), [Card::Printer, Card::Server]);
+        snapshot.today = Some(Today::default());
+        assert_eq!(
+            cards(&snapshot, Timestamp(0)),
+            [Card::Printer, Card::Server]
+        );
+        snapshot.today = Some(Today {
+            lights: 2,
+            ..Today::default()
+        });
+        snapshot.weather = Some(Weather {
+            temperature: 9.0,
+            code: 0,
+            wind: None,
+            high: None,
+            low: None,
+            rain: None,
+            sunrise: None,
+            sunset: None,
+        });
+        snapshot.next_up = vec![Episode {
+            series: "Arcane".into(),
+            season: None,
+            episode: None,
+            title: None,
+            poster: None,
+            at: None,
+        }];
+        assert_eq!(
+            cards(&snapshot, Timestamp(0)),
+            [
+                Card::Weather,
+                Card::Tonight,
+                Card::Printer,
+                Card::Today,
+                Card::Server
+            ]
+        );
     }
 
     #[test]
     fn every_card_is_a_room_of_the_castle() {
-        let rooms = [
-            Card::OnePiece,
-            Card::Portfolio,
-            Card::House,
-            Card::Cerebro,
-            Card::Downloads,
-            Card::Printer,
-            Card::Recent,
-            Card::Server,
-        ]
-        .map(Card::room);
+        let rooms = Card::ALL.map(Card::room);
         let distinct: std::collections::HashSet<_> = rooms.iter().collect();
         assert_eq!(distinct.len(), rooms.len());
         assert_eq!(Card::Printer.room(), "Classe de Potions");
@@ -1380,23 +1761,274 @@ mod tests {
 
     #[test]
     fn the_carousel_turns_once_a_card_has_stayed_its_time() {
-        let list = [Card::OnePiece, Card::Server];
+        let list = [Card::House, Card::Weather];
+        let snapshot = Snapshot::default();
+        let now = Timestamp(0);
         let mut carousel = Carousel::default();
-        assert_eq!(carousel.turn_to(1.0, &list), Card::OnePiece);
+        assert_eq!(carousel.turn_to(1.0, &list, &snapshot, now), Card::House);
         assert_eq!(carousel.take_walk(), None);
-        assert_eq!(carousel.turn_to(CARD_TIME, &list), Card::Server);
-        assert_eq!(carousel.previous, Some(Card::OnePiece));
-        assert_eq!(carousel.since, CARD_TIME);
+        let turn = 1.0 + ROUTINE_TIME;
+        assert_eq!(
+            carousel.turn_to(turn - 0.1, &list, &snapshot, now),
+            Card::House
+        );
+        assert_eq!(carousel.turn_to(turn, &list, &snapshot, now), Card::Weather);
+        assert_eq!(carousel.previous, Some(Card::House));
+        assert!((carousel.since - turn).abs() < 1e-6);
         assert!(carousel.take_walk().is_some());
         assert_eq!(carousel.take_walk(), None);
-        assert_eq!(carousel.turn_to(CARD_TIME * 2.0, &list), Card::OnePiece);
+        let next = turn + ROUTINE_TIME;
+        assert_eq!(carousel.turn_to(next, &list, &snapshot, now), Card::House);
     }
 
     #[test]
-    fn a_single_card_turns_without_footsteps() {
+    fn a_single_card_stays_without_sliding_again() {
         let mut carousel = Carousel::default();
-        assert_eq!(carousel.turn_to(CARD_TIME, &[Card::Server]), Card::Server);
+        let (snapshot, now) = (Snapshot::default(), Timestamp(0));
+        assert_eq!(
+            carousel.turn_to(0.0, &[Card::Weather], &snapshot, now),
+            Card::Weather
+        );
+        assert_eq!(
+            carousel.turn_to(ROUTINE_TIME, &[Card::Weather], &snapshot, now),
+            Card::Weather
+        );
         assert_eq!(carousel.take_walk(), None);
+        assert!(carousel.since.abs() < 1e-6);
+        assert!((carousel.stay - 2.0 * ROUTINE_TIME).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_card_that_has_nothing_more_to_say_gives_its_turn_at_once() {
+        let mut carousel = Carousel::default();
+        let (snapshot, now) = (Snapshot::default(), Timestamp(0));
+        carousel.turn_to(0.0, &[Card::Printer, Card::Weather], &snapshot, now);
+        assert_eq!(
+            carousel.turn_to(1.0, &[Card::Weather], &snapshot, now),
+            Card::Weather
+        );
+    }
+
+    #[test]
+    fn a_healthy_server_comes_every_fifth_turn() {
+        let snapshot = healthy();
+        let list = [Card::Weather, Card::House, Card::Server];
+        let shown = sequence(&list, &snapshot, &mut Memory::default(), 10);
+        let servers: Vec<usize> = shown
+            .iter()
+            .enumerate()
+            .filter(|(_, card)| **card == Card::Server)
+            .map(|(turn, _)| turn)
+            .collect();
+        assert_eq!(servers, [4, 9]);
+    }
+
+    #[test]
+    fn a_server_in_trouble_is_favoured_and_says_why() {
+        let mut snapshot = healthy();
+        let memory = Memory::default();
+        assert_eq!(memory.weight(Card::Server, &snapshot, Timestamp(0)), None);
+        snapshot.disk = Some(disk(10));
+        assert!(server_alarm(&snapshot));
+        assert_eq!(
+            memory.weight(Card::Server, &snapshot, Timestamp(0)),
+            Some(Weight::Favoured)
+        );
+        snapshot.disk = Some(disk(50));
+        snapshot.services.down = vec!["prowlarr".into(), "radarr".into()];
+        assert!(server_alarm(&snapshot));
+        assert_eq!(
+            down_note(&snapshot.services).as_deref(),
+            Some("Hors ligne : prowlarr, radarr")
+        );
+        assert_eq!(down_note(&Services::default()), None);
+    }
+
+    #[test]
+    fn the_house_comes_next_when_it_changed() {
+        let mut snapshot = Snapshot {
+            house: Some(house()),
+            ..Snapshot::default()
+        };
+        let mut memory = Memory::default();
+        memory.observe(&snapshot, Timestamp(0));
+        assert!(!memory.house_changed);
+        snapshot.house.as_mut().unwrap().outlets[0].on = true;
+        memory.observe(&snapshot, Timestamp(0));
+        assert!(memory.house_changed);
+        let list = [Card::Weather, Card::House];
+        memory.shown[Card::Weather as usize] = None;
+        memory.shown[Card::House as usize] = Some(0);
+        memory.turn = 1;
+        let (card, weight) = pick(&list, None, &snapshot, &memory, Timestamp(0));
+        assert_eq!((card, weight), (Card::House, Weight::First));
+        memory.remember(Card::House, &snapshot);
+        assert!(!memory.house_changed);
+        assert_eq!(switches(&house()), [false, true, false, true, true, false]);
+    }
+
+    #[test]
+    fn a_print_near_its_end_comes_every_other_turn() {
+        let snapshot = Snapshot {
+            printer: Some(printing(300.0)),
+            ..Snapshot::default()
+        };
+        let list = [Card::House, Card::Weather, Card::Printer];
+        let shown = sequence(&list, &snapshot, &mut Memory::default(), 5);
+        assert_eq!(
+            shown,
+            [
+                Card::Printer,
+                Card::House,
+                Card::Printer,
+                Card::Weather,
+                Card::Printer
+            ]
+        );
+        let far = Snapshot {
+            printer: Some(printing(5000.0)),
+            ..Snapshot::default()
+        };
+        let memory = Memory::default();
+        assert_eq!(
+            memory.weight(Card::Printer, &far, Timestamp(0)),
+            Some(Weight::Routine)
+        );
+        assert_eq!(
+            memory.weight(Card::Printer, &Snapshot::default(), Timestamp(0)),
+            None
+        );
+    }
+
+    #[test]
+    fn a_print_just_finished_comes_every_other_turn_for_a_while() {
+        let mut snapshot = Snapshot {
+            printer: Some(printing(5000.0)),
+            ..Snapshot::default()
+        };
+        let mut memory = Memory::default();
+        memory.observe(&snapshot, Timestamp(0));
+        snapshot.printer = Some(Printer {
+            state: Some("done".into()),
+            ..Printer::default()
+        });
+        let done = Timestamp::from_secs(100);
+        memory.observe(&snapshot, done);
+        assert_eq!(memory.print_done, Some(done));
+        let weight = |at: i64| memory.weight(Card::Printer, &snapshot, Timestamp::from_secs(at));
+        assert_eq!(weight(400), Some(Weight::First));
+        assert_eq!(weight(800), Some(Weight::Routine));
+    }
+
+    #[test]
+    fn news_favours_its_card() {
+        let now = Timestamp::from_secs(0);
+        let mut snapshot = Snapshot {
+            one_piece: Some(errol_domain::entities::OnePiece {
+                latest: errol_domain::entities::Chapter {
+                    number: 1,
+                    name: String::new(),
+                    arc: None,
+                    pages: None,
+                },
+                next: Some(NextChapter {
+                    number: 2,
+                    at: Timestamp::from_secs(3600),
+                }),
+            }),
+            portfolio: Some(portfolio(1000.0)),
+            ..Snapshot::default()
+        };
+        let mut memory = Memory::default();
+        assert_eq!(
+            memory.weight(Card::OnePiece, &snapshot, now),
+            Some(Weight::Favoured)
+        );
+        assert_eq!(
+            memory.weight(Card::Portfolio, &snapshot, now),
+            Some(Weight::Routine)
+        );
+        memory.remember(Card::Portfolio, &snapshot);
+        snapshot.portfolio = Some(portfolio(1030.0));
+        assert_eq!(
+            memory.weight(Card::Portfolio, &snapshot, now),
+            Some(Weight::Favoured)
+        );
+        snapshot.portfolio = Some(portfolio(1010.0));
+        assert_eq!(
+            memory.weight(Card::Portfolio, &snapshot, now),
+            Some(Weight::Routine)
+        );
+        snapshot.airing = vec![Episode {
+            series: "Arcane".into(),
+            season: None,
+            episode: None,
+            title: None,
+            poster: None,
+            at: Some(Timestamp::from_secs(7200)),
+        }];
+        assert_eq!(
+            memory.weight(Card::Tonight, &snapshot, now),
+            Some(Weight::Favoured)
+        );
+        assert!(!airs_soon(&snapshot, Timestamp::from_secs(-20_000)));
+    }
+
+    #[test]
+    fn the_days_recap_is_favoured_in_the_evening() {
+        let at = |hour: u32| {
+            use chrono::TimeZone;
+            Timestamp(
+                chrono::Local
+                    .with_ymd_and_hms(2026, 11, 8, hour, 0, 0)
+                    .single()
+                    .unwrap()
+                    .timestamp_millis(),
+            )
+        };
+        let (snapshot, memory) = (Snapshot::default(), Memory::default());
+        assert_eq!(
+            memory.weight(Card::Today, &snapshot, at(20)),
+            Some(Weight::Favoured)
+        );
+        assert_eq!(
+            memory.weight(Card::Today, &snapshot, at(10)),
+            Some(Weight::Routine)
+        );
+    }
+
+    #[test]
+    fn important_cards_stay_longer() {
+        assert!((Weight::Routine.time() - ROUTINE_TIME).abs() < 1e-6);
+        assert!((Weight::Favoured.time() - IMPORTANT_TIME).abs() < 1e-6);
+        assert!((Weight::First.time() - IMPORTANT_TIME).abs() < 1e-6);
+        assert!(Weight::First.bonus() > Weight::Favoured.bonus());
+    }
+
+    #[test]
+    fn the_house_says_what_it_will_do_next() {
+        let now = Timestamp::from_secs(1_000_000);
+        let mut house = house();
+        house.outlets[0].next = Some(errol_domain::entities::Switch {
+            at: now.plus_secs(2400.0),
+            on: true,
+        });
+        house.outlets.push(Outlet {
+            id: "old".into(),
+            name: "Passé".into(),
+            on: true,
+            next: Some(errol_domain::entities::Switch {
+                at: now.plus_secs(-60.0),
+                on: false,
+            }),
+        });
+        house.projectors[2].closes_at = Some(now.plus_secs(240.0));
+        let lines = schedule(&house, now);
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].starts_with("Lampe · s'allume "));
+        assert_eq!(lines[1], "La toile remonte dans 4 min");
+        assert!((schedule_top(false, 4, 0.0) - 186.0).abs() < 1e-4);
+        assert!((schedule_top(true, 4, 0.0) - 244.0).abs() < 1e-4);
     }
 
     #[test]
@@ -1440,6 +2072,7 @@ mod tests {
                 id: "lamp".into(),
                 name: "Lampe".into(),
                 on: false,
+                next: None,
             }],
             covers: vec![
                 Cover {
@@ -1461,18 +2094,21 @@ mod tests {
                     name: "Projecteur".into(),
                     on: true,
                     app: Some("Jellyfin".into()),
+                    closes_at: None,
                 },
                 Projector {
                     id: "q".into(),
                     name: "Vieux".into(),
                     on: true,
                     app: None,
+                    closes_at: None,
                 },
                 Projector {
                     id: "r".into(),
                     name: "Éteint".into(),
                     on: false,
                     app: Some("Netflix".into()),
+                    closes_at: None,
                 },
             ],
         }
@@ -1526,10 +2162,27 @@ mod tests {
             free: 3,
         };
         assert!((used_share(disk) - 0.25).abs() < 1e-9);
-        let all = server_plates(disk, Services { up: 3, total: 3 });
+        let all = server_plates(
+            disk,
+            &Services {
+                up: 3,
+                total: 3,
+                down: vec![],
+            },
+        );
         assert_eq!(all[2], ("3 / 3".into(), "services".into(), true));
-        assert!(!server_plates(disk, Services { up: 2, total: 3 })[2].2);
-        assert!(!server_plates(disk, Services::default())[2].2);
+        assert!(
+            !server_plates(
+                disk,
+                &Services {
+                    up: 2,
+                    total: 3,
+                    down: vec![]
+                }
+            )[2]
+            .2
+        );
+        assert!(!server_plates(disk, &Services::default())[2].2);
         let empty = Disk {
             total: 0,
             used: 0,
@@ -1553,6 +2206,7 @@ mod tests {
             snapshot: None,
             read_at: at,
             scene: errol_domain::strategies::Scene::Idle,
+            banner: None,
             now: at,
             warning: None,
         });

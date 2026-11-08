@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use crate::DomainError;
 use crate::entities::{Snapshot, Timestamp};
 use crate::ports::{Clock, FeedSource};
-use crate::strategies::{Scene, SceneDirector};
+use crate::strategies::{Banner, Scene, SceneDirector};
 
 pub struct ObserveFeedDeps {
     pub source: Arc<dyn FeedSource>,
@@ -18,6 +18,8 @@ pub struct View {
     /// When the snapshot was read; playback positions move on from there.
     pub read_at: Timestamp,
     pub scene: Scene,
+    /// Small news over the scene, while it lasts.
+    pub banner: Option<Banner>,
     pub now: Timestamp,
     /// Why the last read failed, when it did (the previous snapshot is kept).
     pub warning: Option<String>,
@@ -70,7 +72,7 @@ impl ObserveFeed {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         match result {
             Ok(snapshot) => {
-                state.director.absorb(&snapshot.events);
+                state.director.absorb(&snapshot, now);
                 state.snapshot = Some(Arc::new(snapshot));
                 state.read_at = now;
                 state.warning = None;
@@ -84,10 +86,12 @@ impl ObserveFeed {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         let state = &mut *state;
         let scene = state.director.scene(now, state.snapshot.as_deref());
+        let banner = state.director.banner(now);
         View {
             snapshot: state.snapshot.clone(),
             read_at: state.read_at,
             scene,
+            banner,
             now,
             warning: state.warning.clone(),
         }
@@ -172,7 +176,7 @@ mod tests {
     }
 
     #[test]
-    fn an_event_in_a_later_read_takes_the_screen() {
+    fn a_lamp_in_a_later_read_comes_as_a_banner() {
         let light = Event {
             id: EventId::new("1"),
             at: Timestamp(0),
@@ -190,6 +194,8 @@ mod tests {
         ]);
         observe.refresh();
         observe.refresh();
-        assert!(matches!(observe.view().scene, Scene::Event { .. }));
+        let view = observe.view();
+        assert_eq!(view.scene, Scene::Idle);
+        assert!(view.banner.is_some());
     }
 }

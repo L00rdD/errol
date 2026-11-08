@@ -15,8 +15,9 @@ use errol_domain::usecases::ObserveFeed;
 /// second to that before an event takes the screen.
 const INTERVAL: Duration = Duration::from_secs(1);
 /// The stream says something at least every 15 s (a comment when the feed is
-/// quiet): longer than this without a word, and the poller asks by itself.
-const STALE: Duration = Duration::from_secs(45);
+/// quiet): longer than this without a word, and the poller asks by itself. A
+/// lamp switched while a stream hangs waits no longer than this.
+const STALE: Duration = Duration::from_secs(20);
 /// How long after a stream ended (or went quiet) the next one is tried.
 const RETRY: Duration = Duration::from_secs(15);
 

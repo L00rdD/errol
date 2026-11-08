@@ -26,6 +26,102 @@ pub struct Snapshot {
     pub warnings: Vec<String>,
     /// What the user asked of the screen, through the feed (its remote control).
     pub settings: Settings,
+    /// The weather outside, and the sun.
+    pub weather: Option<Weather>,
+    /// The next episodes to watch, Jellyfin's "next up".
+    pub next_up: Vec<Episode>,
+    /// Episodes that air today or tomorrow, from Sonarr's calendar.
+    pub airing: Vec<Episode>,
+    /// What happened since midnight.
+    pub today: Option<Today>,
+}
+
+/// The weather outside, as Open-Meteo gives it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Weather {
+    /// °C, now.
+    pub temperature: f64,
+    /// WMO weather code, now.
+    pub code: u32,
+    /// km/h, now.
+    pub wind: Option<f64>,
+    /// Today's highest and lowest, °C.
+    pub high: Option<f64>,
+    pub low: Option<f64>,
+    /// Chance of rain in the coming hours, in percent.
+    pub rain: Option<f64>,
+    pub sunrise: Option<Timestamp>,
+    pub sunset: Option<Timestamp>,
+}
+
+/// The sky, in a few words.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Sky {
+    Clear,
+    Cloudy,
+    Overcast,
+    Fog,
+    Drizzle,
+    Rain,
+    Snow,
+    Storm,
+}
+
+impl Weather {
+    /// The sky of a WMO code.
+    pub fn sky(&self) -> Sky {
+        match self.code {
+            0 | 1 => Sky::Clear,
+            3 => Sky::Overcast,
+            45 | 48 => Sky::Fog,
+            51..=57 => Sky::Drizzle,
+            61..=67 | 80..=82 => Sky::Rain,
+            71..=77 | 85 | 86 => Sky::Snow,
+            95..=99 => Sky::Storm,
+            // 2, partly cloudy, and any code the screen does not know
+            _ => Sky::Cloudy,
+        }
+    }
+
+    /// The sun is up at `now`; None without sunrise and sunset.
+    pub fn daylight(&self, now: Timestamp) -> Option<bool> {
+        Some(now >= self.sunrise? && now < self.sunset?)
+    }
+}
+
+/// An episode to watch or about to air.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Episode {
+    pub series: String,
+    pub season: Option<u32>,
+    pub episode: Option<u32>,
+    pub title: Option<String>,
+    pub poster: Option<PictureRef>,
+    /// When it airs; None for one already in the library.
+    pub at: Option<Timestamp>,
+}
+
+/// How many times each thing happened since midnight.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Today {
+    /// Films and episodes that entered the library.
+    pub imports: u32,
+    pub downloads: u32,
+    /// Videos started on Jellyfin.
+    pub plays: u32,
+    /// Lamps switched on.
+    pub lights: u32,
+    /// Prints finished.
+    pub prints: u32,
+    /// Times a Claude Code session waited for an answer.
+    pub questions: u32,
+}
+
+impl Today {
+    /// Nothing happened yet.
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 /// Settings the user sets from elsewhere (the home page) and the feed passes on.
@@ -100,6 +196,15 @@ pub struct Outlet {
     pub id: String,
     pub name: String,
     pub on: bool,
+    /// Its next scheduled switch, when it has a schedule.
+    pub next: Option<Switch>,
+}
+
+/// A scheduled switch: at `at`, on or off.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Switch {
+    pub at: Timestamp,
+    pub on: bool,
 }
 
 /// A motorised cover: the projection screen.
@@ -119,6 +224,8 @@ pub struct Projector {
     pub on: bool,
     /// The app open on it (Netflix, Jellyfin…), when known.
     pub app: Option<String>,
+    /// When its projection screen goes back up, the projector being off.
+    pub closes_at: Option<Timestamp>,
 }
 
 /// A torrent still downloading.
@@ -213,10 +320,12 @@ pub struct Disk {
 }
 
 /// Containers running, out of all of them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Services {
     pub up: u32,
     pub total: u32,
+    /// The names of those down.
+    pub down: Vec<String>,
 }
 
 /// The Claude Code sessions running on the Mac, as Cerebro shows them: those

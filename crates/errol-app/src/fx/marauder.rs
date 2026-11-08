@@ -2,12 +2,16 @@
 //! and the castle come baked (`render::Map`); over them, people walk about
 //! with their names on ribbons and their footprints behind them, and the
 //! viewer's own footsteps walk through the corridors from one room's door to
-//! the next when the screen moves on.
+//! the next when the screen moves on. News stirs the castle: Filch hurries
+//! to a lamp, Peeves spills ink, an owl crosses the map with what arrived,
+//! Dumbledore comes to whoever waits. Rain and snow fall in faint ink.
 
+use errol_domain::entities::{EventKind, Sky};
 use femtovg::Path;
 use std::collections::VecDeque;
 
-use crate::anim::unit;
+use super::ambience::{self, Ambience, Fall};
+use crate::anim::{ease_out, unit};
 use crate::look::fade;
 use crate::render::{Gfx, ink};
 
@@ -23,6 +27,30 @@ const WALK_TIME: f32 = 1.1;
 /// ...fades from then, and is gone after this.
 const WALK_FADE: f32 = 1.6;
 const WALK_LIFE: f32 = 4.5;
+/// Someone sent by news hurries this many seconds, this many times faster.
+const HURRY: f32 = 5.0;
+const HURRY_PACE: f32 = 3.0;
+/// The owl crosses the map in this many seconds.
+const OWL_TIME: f32 = 6.0;
+/// Spilt ink spreads, stays, then fades out by this many seconds.
+const BLOT_LIFE: f32 = 5.0;
+/// The corridor along the bottom of the map, below the cards.
+const HALL: f32 = 441.0;
+const FILCH: usize = 0;
+const NORRIS: usize = 1;
+const PEEVES: usize = 2;
+const DUMBLEDORE: usize = 3;
+
+/// What news does on the Map.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Happening {
+    /// Someone of the castle hurries to where it happened.
+    Hurry(usize),
+    /// Peeves spills ink there, and comes to look.
+    Blot,
+    /// An owl crosses the map at that height, bringing what arrived.
+    Owl,
+}
 
 struct Walker {
     name: &'static str,
@@ -34,6 +62,8 @@ struct Walker {
     since: f32,
     /// Footprints left behind: x, y, heading, left foot.
     trail: VecDeque<(f32, f32, f32, bool)>,
+    /// 1 when news sent them somewhere, wearing off over `HURRY` seconds.
+    hurry: f32,
 }
 
 pub struct Marauder {
@@ -41,6 +71,11 @@ pub struct Marauder {
     /// The corners of the walk being written, and how long ago it started.
     walk: Option<(Vec<(f32, f32)>, f32)>,
     seed: u64,
+    /// Spilt ink: where, and how long ago.
+    blot: Option<(f32, f32, f32)>,
+    /// The owl: how long ago it set off.
+    owl: Option<f32>,
+    pub ambience: Ambience,
 }
 
 impl Marauder {
@@ -60,12 +95,16 @@ impl Marauder {
                 ty: rand() * H,
                 since: 0.0,
                 trail: VecDeque::new(),
+                hurry: 0.0,
             })
             .collect();
         Self {
             people,
             walk: None,
             seed,
+            blot: None,
+            owl: None,
+            ambience: Ambience::new(),
         }
     }
 
@@ -111,21 +150,105 @@ impl Marauder {
         self.walk = Some((corners, 0.0));
     }
 
-    pub fn draw(&mut self, gfx: &mut Gfx, dt: f32) {
+    /// News: someone hurries there, ink is spilt, or an owl flies in.
+    pub fn react(&mut self, kind: &EventKind) {
+        let (x, y) = spot(ambience::place(kind));
+        match happening(kind) {
+            Happening::Hurry(index) => self.send(index, (x, y)),
+            Happening::Blot => {
+                self.blot = Some((x, y, 0.0));
+                self.send(PEEVES, (x - 30.0, y));
+            }
+            Happening::Owl => self.owl = Some(0.0),
+        }
+    }
+
+    /// Sends someone of the castle hurrying to `to`.
+    fn send(&mut self, index: usize, to: (f32, f32)) {
+        let person = &mut self.people[index];
+        (person.tx, person.ty) = to;
+        person.hurry = 1.0;
+    }
+
+    pub fn draw(&mut self, gfx: &mut Gfx, real_dt: f32) {
+        let dt = self.ambience.tick(real_dt);
         if let Some(map) = gfx.map {
             gfx.image(map.parchment, 0.0, 0.0, W, H, 1.0);
         } else {
             gfx.rect(0.0, 0.0, W, H, ink::paper());
         }
-        // the people of the castle
+        if let Some(fall) = fall(self.ambience.sky) {
+            ambience::draw_fall(gfx, fall, self.ambience.clock, ink::ink(), 0.35);
+        }
+        self.draw_blot(gfx, real_dt);
+        // the people of the castle, still when the background is
         for index in 0..self.people.len() {
             let next = (self.rand() * W, self.rand() * H);
-            self.people[index].step(PACE * dt, next);
+            let person = &mut self.people[index];
+            let pace = 1.0 + HURRY_PACE * person.hurry;
+            person.hurry = (person.hurry - real_dt / HURRY).max(0.0);
+            person.step(PACE * dt * pace, next);
         }
         for person in &self.people {
             person.draw(gfx);
         }
-        self.draw_walk(gfx, dt);
+        self.draw_owl(gfx, real_dt);
+        self.draw_walk(gfx, real_dt);
+    }
+
+    /// The ink Peeves spilt: a blot and its splashes, spreading then fading.
+    fn draw_blot(&mut self, gfx: &mut Gfx, dt: f32) {
+        let Some((x, y, age)) = &mut self.blot else {
+            return;
+        };
+        *age += dt;
+        let (x, y) = (*x, *y);
+        let Some((size, alpha)) = blot(*age) else {
+            self.blot = None;
+            return;
+        };
+        let mut path = Path::new();
+        path.ellipse(x, y, 11.0 * size, 8.0 * size);
+        for k in 0..7u64 {
+            let (angle, reach) = (
+                unit(k, 41) * std::f32::consts::TAU,
+                13.0 + unit(k, 42) * 12.0,
+            );
+            let r = (0.8 + unit(k, 43) * 2.4) * size;
+            path.circle(
+                x + angle.cos() * reach * size,
+                y + angle.sin() * reach * size,
+                r,
+            );
+        }
+        gfx.fill(&path, fade(ink::ink(), alpha));
+    }
+
+    /// The owl, wings beating, its name on a ribbon trailing behind, along
+    /// the bottom corridor.
+    fn draw_owl(&mut self, gfx: &mut Gfx, dt: f32) {
+        let Some(age) = &mut self.owl else {
+            return;
+        };
+        *age += dt;
+        let Some((x, y, flap)) = owl_at(*age) else {
+            self.owl = None;
+            return;
+        };
+        let mut wings = Path::new();
+        wings.move_to(x - 13.0, y - 2.0 + flap * 7.0);
+        wings.quad_to(x - 6.0, y - 6.0 - flap * 2.0, x, y);
+        wings.quad_to(
+            x + 6.0,
+            y - 6.0 - flap * 2.0,
+            x + 13.0,
+            y - 2.0 + flap * 7.0,
+        );
+        gfx.stroke(&wings, fade(ink::ink(), 0.8), 1.8);
+        let mut body = Path::new();
+        body.ellipse(x, y + 2.5, 2.6, 4.0);
+        gfx.fill(&body, fade(ink::ink(), 0.8));
+        gfx.ribbon(x - 42.0, y - 8.0, "Errol", 0.62);
     }
 
     /// The viewer's own footsteps, until they are gone.
@@ -232,6 +355,66 @@ fn footprint(gfx: &mut Gfx, x: f32, y: f32, heading: f32, left: bool, alpha: f32
     gfx.canvas.restore();
 }
 
+/// What each kind of news does on the Map: Filch hurries to a lamp,
+/// Peeves spills ink by the cinema or the printer, an owl brings what
+/// arrived, Dumbledore comes to whoever waits, Mrs Norris to the film.
+fn happening(kind: &EventKind) -> Happening {
+    match kind {
+        EventKind::Light { .. } => Happening::Hurry(FILCH),
+        EventKind::Cover { .. } | EventKind::Projector { .. } | EventKind::Print(_) => {
+            Happening::Blot
+        }
+        EventKind::Download { .. } | EventKind::Import(_) | EventKind::Scan(_) => Happening::Owl,
+        EventKind::Waiting { .. } => Happening::Hurry(DUMBLEDORE),
+        EventKind::Play { .. } => Happening::Hurry(NORRIS),
+    }
+}
+
+/// The blot `age` seconds after the spill: its size and opacity, `None`
+/// once dry and gone.
+fn blot(age: f32) -> Option<(f32, f32)> {
+    if age >= BLOT_LIFE {
+        return None;
+    }
+    let size = ease_out(age / 0.5);
+    let alpha = 0.6 * ((BLOT_LIFE - age) / 2.0).min(1.0);
+    Some((size, alpha))
+}
+
+/// Where the owl is `age` seconds after setting off, bobbing along the
+/// bottom corridor, and how its wings are (-1 up, 1 down); `None` once
+/// across.
+fn owl_at(age: f32) -> Option<(f32, f32, f32)> {
+    if age >= OWL_TIME {
+        return None;
+    }
+    let x = -30.0 + (W + 90.0) * age / OWL_TIME;
+    Some((x, HALL + (age * 1.4).sin() * 3.0, (age * 9.0).sin()))
+}
+
+/// Where news happens on the Map: the cards hide the right of the screen,
+/// so what happens there happens in the bottom corridor below.
+fn spot((x, y): (f32, f32)) -> (f32, f32) {
+    if x > 280.0 { (x, HALL) } else { (x, y) }
+}
+
+/// Faint ink drops for rain, dots for snow.
+fn fall(sky: Option<Sky>) -> Option<Fall> {
+    let (count, speed, length, slant) = match sky? {
+        Sky::Drizzle => (20, 110.0, 5.0, 0.1),
+        Sky::Rain => (40, 140.0, 7.0, 0.12),
+        Sky::Storm => (60, 180.0, 9.0, 0.2),
+        Sky::Snow => (45, 22.0, 0.0, 0.0),
+        _ => return None,
+    };
+    Some(Fall {
+        count,
+        speed,
+        length,
+        slant,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -273,6 +456,7 @@ mod tests {
             ty: 0.0,
             since: 0.0,
             trail: VecDeque::new(),
+            hurry: 0.0,
         };
         for _ in 0..40 {
             walker.step(5.0, (0.0, 0.0));
@@ -295,5 +479,90 @@ mod tests {
         assert_eq!(marauder.walk.as_ref().map(|walk| walk.0.len()), Some(2));
         marauder.walk((0.0, 0.0, 100.0, 50.0), (300.0, 200.0, 100.0, 50.0));
         assert_eq!(marauder.walk.as_ref().map(|walk| walk.0.len()), Some(4));
+    }
+
+    #[test]
+    fn a_lamp_sends_filch_hurrying_there() {
+        let mut marauder = Marauder::new();
+        let lamp = EventKind::Light {
+            name: "Salon".into(),
+            on: false,
+        };
+        marauder.react(&lamp);
+        let filch = &marauder.people[FILCH];
+        assert_eq!((filch.tx, filch.ty), spot(ambience::place(&lamp)));
+        assert!((filch.hurry - 1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn the_cinema_spills_ink_and_arrivals_bring_an_owl() {
+        let mut marauder = Marauder::new();
+        marauder.react(&EventKind::Cover {
+            id: "c".into(),
+            name: "Écran".into(),
+            down: true,
+        });
+        assert!(marauder.blot.is_some());
+        assert!(marauder.people[PEEVES].hurry > 0.0);
+        marauder.react(&EventKind::Download {
+            name: "x".into(),
+            size: None,
+        });
+        assert!(marauder.owl.is_some());
+    }
+
+    #[test]
+    fn everyone_has_their_news() {
+        let waiting = EventKind::Waiting {
+            name: "errol".into(),
+            project: None,
+            room: None,
+        };
+        assert_eq!(happening(&waiting), Happening::Hurry(DUMBLEDORE));
+        let play = EventKind::Play { title: "x".into() };
+        assert_eq!(happening(&play), Happening::Hurry(NORRIS));
+        let projector = EventKind::Projector {
+            name: "p".into(),
+            on: true,
+            app: None,
+        };
+        assert_eq!(happening(&projector), Happening::Blot);
+    }
+
+    #[test]
+    fn ink_spreads_then_dries_away() {
+        let (s0, a0) = blot(0.0).expect("a blot");
+        let (s1, a1) = blot(1.0).expect("a blot");
+        assert!(s0 < 0.01 && (s1 - 1.0).abs() < 1e-6);
+        assert!((a0 - a1).abs() < 1e-6);
+        assert!(blot(4.0).expect("a blot").1 < a1);
+        assert_eq!(blot(BLOT_LIFE), None);
+    }
+
+    #[test]
+    fn the_owl_crosses_the_map_beating_its_wings() {
+        let (x0, _, _) = owl_at(0.0).expect("an owl");
+        let (x1, y1, flap) = owl_at(OWL_TIME / 2.0).expect("an owl");
+        assert!(x0 < 0.0 && x1 > 300.0 && x1 < 500.0);
+        assert!((y1 - HALL).abs() <= 3.0 && flap.abs() <= 1.0);
+        assert_eq!(owl_at(OWL_TIME), None);
+    }
+
+    #[test]
+    fn what_happens_behind_the_cards_happens_in_the_corridor() {
+        assert_eq!(spot((190.0, 300.0)), (190.0, 300.0));
+        assert_eq!(spot((630.0, 130.0)), (630.0, HALL));
+    }
+
+    #[test]
+    fn rain_and_snow_fall_in_ink() {
+        assert_eq!(fall(None), None);
+        assert_eq!(fall(Some(Sky::Cloudy)), None);
+        assert!(
+            fall(Some(Sky::Storm)).expect("rain").count
+                > fall(Some(Sky::Drizzle)).expect("rain").count
+        );
+        assert!(fall(Some(Sky::Rain)).is_some());
+        assert!(fall(Some(Sky::Snow)).expect("snow").length.abs() < f32::EPSILON);
     }
 }

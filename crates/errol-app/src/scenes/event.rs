@@ -27,7 +27,7 @@ const TEXT_W: f32 = 420.0;
 const NOTICE: (f32, f32, f32, f32) = (30.0, TOP + 14.0, 740.0, BOTTOM - TOP - 40.0);
 
 /// What an event says: (kicker, title, subtitle, tags).
-type Words = (String, String, String, Vec<String>);
+pub(super) type Words = (String, String, String, Vec<String>);
 
 /// How the words of an event are written in a look.
 #[derive(Debug, Clone, Copy)]
@@ -183,6 +183,40 @@ fn timer(gfx: &mut Gfx, age: f32, length: f32) {
     gfx.rect(bx, by, bw * left, 2.0, gfx.palette.accent);
 }
 
+/// The picture of the event, small, centred on (`x`, `y`) and kept within
+/// `size` of it: a banner's icon.
+pub(super) fn thumbnail(
+    gfx: &mut Gfx,
+    view: &View,
+    event: &Event,
+    age: f32,
+    textures: &mut Textures,
+    (x, y, size): (f32, f32, f32),
+) {
+    let (scale, dx, dy) = thumbnail_fit(&event.kind);
+    let scale = scale * size / 54.0;
+    gfx.canvas.save();
+    gfx.canvas
+        .intersect_scissor(x - size / 2.0, y - size / 2.0, size, size);
+    gfx.canvas.translate(x, y);
+    gfx.canvas.scale(scale, scale);
+    gfx.canvas.translate(-CX - dx, -CY - dy);
+    picture(gfx, view, event, age, textures);
+    gfx.canvas.restore();
+}
+
+/// How a picture fits a banner's icon, 54 units wide: its scale, and the
+/// middle of what it draws from the picture's centre. The bulb and the check
+/// are narrow; the projector and its beam lie right and high.
+fn thumbnail_fit(kind: &EventKind) -> (f32, f32, f32) {
+    match kind {
+        EventKind::Light { .. } => (0.42, 0.0, -8.0),
+        EventKind::Download { .. } => (0.32, 0.0, 0.0),
+        EventKind::Projector { .. } => (0.18, 5.0, -12.0),
+        _ => (0.2, 0.0, 0.0),
+    }
+}
+
 /// Draws the picture of the event.
 fn picture(gfx: &mut Gfx, view: &View, event: &Event, age: f32, textures: &mut Textures) {
     match &event.kind {
@@ -336,7 +370,7 @@ fn waiting_picture(gfx: &mut Gfx, view: &View, name: &str, age: f32, textures: &
 }
 
 /// What the event says: (kicker, title, subtitle, tags).
-fn words(event: &Event) -> Words {
+pub(super) fn words(event: &Event) -> Words {
     match &event.kind {
         EventKind::Light { name, on } => light_words(name, *on),
         EventKind::Cover { name, down, .. } => cover_words(name, *down),
@@ -1119,5 +1153,27 @@ mod tests {
         assert!((slide(0.0, 0.3) - 30.0).abs() < 1e-4);
         assert_eq!(timer_box(false), (26.0, BOTTOM - 10.0, 748.0));
         assert!((timer_box(true).2 - 680.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn a_thumbnail_shrinks_the_wide_pictures_most() {
+        let light = EventKind::Light {
+            name: "Lampe".into(),
+            on: true,
+        };
+        let download = EventKind::Download {
+            name: "x".into(),
+            size: None,
+        };
+        let projector = EventKind::Projector {
+            name: "x".into(),
+            on: true,
+            app: None,
+        };
+        let play = EventKind::Play { title: "x".into() };
+        assert_eq!(thumbnail_fit(&light), (0.42, 0.0, -8.0));
+        assert_eq!(thumbnail_fit(&download).0, 0.32);
+        assert_eq!(thumbnail_fit(&projector), (0.18, 5.0, -12.0));
+        assert_eq!(thumbnail_fit(&play), (0.2, 0.0, 0.0));
     }
 }

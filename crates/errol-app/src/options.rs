@@ -21,10 +21,13 @@ pub struct Options {
     /// Save a PNG of the screen after `shot_after` seconds, then quit.
     pub shot: Option<String>,
     pub shot_after: f64,
+    /// The night whatever the hour and the house: the screen asleep, for
+    /// previews and shots.
+    pub night: bool,
 }
 
 const USAGE: &str = "usage: errol [--look friday|cyberpunk|hogwarts] [--demo [all|idle|light|cover|projector|cinema|import|download|scan|cerebro|print]]
-                [--feed URL] [--jellyfin URL] [--window] [--fps N] [--shot FILE.png [--after SECS]]
+                [--feed URL] [--jellyfin URL] [--window] [--fps N] [--night] [--shot FILE.png [--after SECS]]
 environment: ERROL_LOOK, ERROL_FEED, ERROL_JELLYFIN, ERROL_FPS";
 
 impl Options {
@@ -62,6 +65,7 @@ impl Options {
                 .unwrap_or(30),
             shot: None,
             shot_after: 6.0,
+            night: false,
         }
     }
 
@@ -74,6 +78,7 @@ impl Options {
         match arg {
             "--demo" => self.demo = Some(demo_scene(args)?),
             "--window" => self.windowed = true,
+            "--night" => self.night = true,
             "-h" | "--help" => return Err(USAGE.into()),
             "--look" | "--feed" | "--jellyfin" | "--fps" | "--shot" | "--after" => {
                 let value = args
@@ -137,6 +142,7 @@ mod tests {
         assert_eq!(options.fps, 30);
         assert!(options.shot.is_none());
         assert!((options.shot_after - 6.0).abs() < f64::EPSILON);
+        assert!(!options.night);
     }
 
     #[test]
@@ -182,6 +188,7 @@ mod tests {
                 "x.png",
                 "--after",
                 "2.5",
+                "--night",
             ],
         )
         .unwrap();
@@ -192,6 +199,7 @@ mod tests {
         assert_eq!(options.fps, 12);
         assert_eq!(options.shot.as_deref(), Some("x.png"));
         assert!((options.shot_after - 2.5).abs() < f64::EPSILON);
+        assert!(options.night);
     }
 
     #[test]

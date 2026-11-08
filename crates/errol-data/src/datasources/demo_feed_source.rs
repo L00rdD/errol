@@ -1,18 +1,22 @@
 //! A made-up evening, to see every scene without waiting for the house:
 //! a neon switches on, the projection screen comes down, the projector starts,
 //! a film plays, a Claude Code session waits for an answer, an episode and a
-//! download arrive, a new scan is out, a resin print finishes. Pictures
-//! come from TMDB. `DemoScene` other than `All` holds a single scene.
+//! download arrive, a new scan is out, a resin print finishes. It rains, an
+//! episode airs tonight, two are next up. Pictures come from TMDB.
+//! `DemoScene` other than `All` holds a single scene; held on the idle
+//! screen, a film has just ended and the projection screen is about to go up.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use chrono::{Local, NaiveTime, TimeZone};
+
 use errol_domain::DomainError;
 use errol_domain::entities::{
-    Actor, ActorState, Cerebro, Chapter, Cover, Disk, Download, Event, EventId, EventKind, House,
-    Import, MediaKind, NextChapter, OnePiece, Outlet, PictureRef, Playing, Portfolio, Position,
-    PrintNews, PrintPhase, Printer, Projector, Services, Session, SessionScene, SessionStatus,
-    Snapshot, Timestamp,
+    Actor, ActorState, Cerebro, Chapter, Cover, Disk, Download, Episode, Event, EventId, EventKind,
+    House, Import, MediaKind, NextChapter, OnePiece, Outlet, PictureRef, Playing, Portfolio,
+    Position, PrintNews, PrintPhase, Printer, Projector, Services, Session, SessionScene,
+    SessionStatus, Snapshot, Switch, Timestamp, Today, Weather,
 };
 use errol_domain::ports::{Clock, FeedSource};
 
@@ -274,10 +278,104 @@ fn base(now: Timestamp) -> Snapshot {
             used: 980_000_000_000,
             free: 450_000_000_000,
         }),
-        services: Services { up: 18, total: 18 },
+        services: Services {
+            up: 17,
+            total: 18,
+            down: vec!["prowlarr".into()],
+        },
         cerebro: Some(demo_cerebro(now)),
+        weather: Some(demo_weather(now)),
+        next_up: demo_next_up(),
+        airing: demo_airing(now),
+        today: Some(Today {
+            imports: 3,
+            downloads: 2,
+            plays: 1,
+            lights: 5,
+            prints: 1,
+            questions: 4,
+        }),
         ..Snapshot::default()
     }
+}
+
+/// A rainy November day: the sun rose at 07:52 and sets at 17:21.
+fn demo_weather(now: Timestamp) -> Weather {
+    Weather {
+        temperature: 9.4,
+        code: 61,
+        wind: Some(18.0),
+        high: Some(12.0),
+        low: Some(6.0),
+        rain: Some(70.0),
+        sunrise: Some(today_at(now, 7, 52)),
+        sunset: Some(today_at(now, 17, 21)),
+    }
+}
+
+/// `hour`:`minute` on the day of `now`, in local time.
+fn today_at(now: Timestamp, hour: u32, minute: u32) -> Timestamp {
+    let time = NaiveTime::from_hms_opt(hour, minute, 0).unwrap_or_default();
+    let day = Local
+        .timestamp_millis_opt(now.0)
+        .single()
+        .map(|local| local.date_naive().and_time(time));
+    day.and_then(|at| Local.from_local_datetime(&at).single())
+        .map_or(now, |at| Timestamp(at.timestamp_millis()))
+}
+
+/// An episode of `series` with its poster on TMDB.
+fn episode(series: &str, (season, number): (u32, u32), title: &str, poster: &str) -> Episode {
+    Episode {
+        series: series.into(),
+        season: Some(season),
+        episode: Some(number),
+        title: Some(title.into()),
+        poster: Some(PictureRef::new(format!("{TMDB}w342/{poster}.jpg"))),
+        at: None,
+    }
+}
+
+/// What airs: House of the Dragon in two hours, Arcane tomorrow.
+fn demo_airing(now: Timestamp) -> Vec<Episode> {
+    vec![
+        Episode {
+            at: Some(now.plus_secs(2.0 * 3600.0)),
+            ..episode(
+                "House of the Dragon",
+                (3, 2),
+                "The Dragon's Wake",
+                "z2yahl2uefxDCl0nogcRBstwruJ",
+            )
+        },
+        Episode {
+            at: Some(now.plus_secs(26.0 * 3600.0)),
+            ..episode(
+                "Arcane",
+                (2, 7),
+                "Pretend Like It's the First Time",
+                "fqldf2t8ztc9aiwn3k6mlX3tvRT",
+            )
+        },
+    ]
+}
+
+/// Jellyfin's next up: the episodes started series wait for.
+fn demo_next_up() -> Vec<Episode> {
+    vec![
+        episode(
+            "Severance",
+            (2, 4),
+            "Woe's Hollow",
+            "lFf6LLrQjYldcZItzOkGmMMigP7",
+        ),
+        episode(
+            "The Last of Us",
+            (2, 3),
+            "The Path",
+            "uKvVjHNqB5VmOrdxqAt2F7J78ED",
+        ),
+    ]
 }
 
 /// The lamps on, the neon off, the screen up, the projector off.
@@ -288,11 +386,13 @@ fn demo_house() -> House {
                 id: "floor-lamp".into(),
                 name: "Lampadaire".into(),
                 on: true,
+                next: None,
             },
             Outlet {
                 id: "neon".into(),
                 name: "Néon".into(),
                 on: false,
+                next: None,
             },
         ],
         covers: vec![Cover {
@@ -306,6 +406,7 @@ fn demo_house() -> House {
             name: "Projecteur".into(),
             on: false,
             app: None,
+            closes_at: None,
         }],
     }
 }
@@ -503,7 +604,9 @@ fn pensieve_session() -> Session {
 
 /// The house and the Mac `at` seconds into the evening: the neon, the screen
 /// coming down, the projector, the session that asked waiting until the end.
-fn evening(snapshot: &mut Snapshot, at: f64) {
+/// Down with the projector still off, the screen would go back up after
+/// five minutes.
+fn evening(snapshot: &mut Snapshot, at: f64, now: Timestamp) {
     if let Some(house) = &mut snapshot.house {
         house.outlets[1].on = at >= 6.0;
         let cover = &mut house.covers[0];
@@ -513,6 +616,9 @@ fn evening(snapshot: &mut Snapshot, at: f64) {
             house.projectors[0].on = true;
             house.projectors[0].app = Some("Jellyfin".into());
         }
+        house.projectors[0].closes_at = (34.0..76.0)
+            .contains(&at)
+            .then(|| now.plus_secs(300.0 - (at - 34.0)));
     }
     if let Some(cerebro) = snapshot.cerebro.as_mut().filter(|_| at >= 122.0) {
         cerebro.sessions[0].status = SessionStatus::Waiting;
@@ -525,7 +631,43 @@ fn evening(snapshot: &mut Snapshot, at: f64) {
     }
 }
 
+/// The neon's schedule from the start of the demo: off, it switches on 40
+/// minutes after; on, it switches off three hours after.
+fn neon_switch(on: bool, start: Timestamp) -> Switch {
+    if on {
+        Switch {
+            at: start.plus_secs(3.0 * 3600.0),
+            on: false,
+        }
+    } else {
+        Switch {
+            at: start.plus_secs(40.0 * 60.0),
+            on: true,
+        }
+    }
+}
+
+/// Held on the idle screen, a film has just ended: the projector is off, the
+/// screen still down, and it goes back up four minutes after the start.
+fn after_the_film(house: &mut House, start: Timestamp, now: Timestamp) {
+    let closes = start.plus_secs(240.0);
+    let down = now < closes;
+    house.covers[0].position = if down { 100.0 } else { 0.0 };
+    house.projectors[0].closes_at = down.then_some(closes);
+}
+
 impl DemoFeedSource {
+    /// The house's schedules, and on the idle screen the end of a film.
+    fn schedules(&self, snapshot: &mut Snapshot, now: Timestamp) {
+        let Some(house) = &mut snapshot.house else {
+            return;
+        };
+        house.outlets[1].next = Some(neon_switch(house.outlets[1].on, self.start));
+        if self.scene == DemoScene::Idle {
+            after_the_film(house, self.start, now);
+        }
+    }
+
     /// The print starts near the end of the evening; held, or on the idle
     /// screen, it is well under way.
     fn printer(&self, now: Timestamp, at: f64) -> Option<Printer> {
@@ -574,7 +716,8 @@ impl FeedSource for DemoFeedSource {
                 }
             }
         }
-        evening(&mut snapshot, at);
+        evening(&mut snapshot, at, now);
+        self.schedules(&mut snapshot, now);
         snapshot.printer = self.printer(now, at);
         if at >= 110.0 || self.scene == DemoScene::Cinema {
             snapshot
@@ -646,7 +789,7 @@ mod tests {
     #[test]
     fn late_in_the_evening_everything_happened() {
         let mut snapshot = base(Timestamp(0));
-        evening(&mut snapshot, 230.0);
+        evening(&mut snapshot, 230.0, Timestamp(0));
         let house = snapshot.house.unwrap();
         assert!(house.outlets[1].on && house.projectors[0].on);
         assert_eq!(house.covers[0].position, 100.0);
@@ -664,5 +807,51 @@ mod tests {
                 .printer(Timestamp(0), 6.0)
                 .is_none()
         );
+    }
+    #[test]
+    fn held_on_the_idle_screen_the_screen_goes_up_after_four_minutes() {
+        let demo = source(DemoScene::Idle);
+        let snapshot = demo.fetch().unwrap();
+        let house = snapshot.house.unwrap();
+        assert_eq!(house.covers[0].position, 100.0);
+        assert_eq!(
+            house.projectors[0].closes_at,
+            Some(demo.start.plus_secs(240.0))
+        );
+        let neon = house.outlets[1].next.unwrap();
+        assert!(neon.on && neon.at == demo.start.plus_secs(2400.0));
+        let mut later = base(Timestamp(0));
+        let house = later.house.as_mut().unwrap();
+        after_the_film(house, Timestamp(0), Timestamp::from_secs(300));
+        assert_eq!(house.covers[0].position, 0.0);
+        assert_eq!(house.projectors[0].closes_at, None);
+        assert!(!neon_switch(true, Timestamp(0)).on);
+    }
+
+    #[test]
+    fn the_screen_down_with_the_projector_off_would_go_back_up() {
+        let mut snapshot = base(Timestamp(0));
+        evening(&mut snapshot, 44.0, Timestamp(0));
+        let projector = &snapshot.house.as_ref().unwrap().projectors[0];
+        assert_eq!(projector.closes_at, Some(Timestamp::from_secs(290)));
+        evening(&mut snapshot, 90.0, Timestamp(0));
+        assert_eq!(snapshot.house.unwrap().projectors[0].closes_at, None);
+    }
+
+    #[test]
+    fn the_weather_the_episodes_and_the_day_are_made_up_too() {
+        let now = Timestamp::from_secs(1_794_000_000);
+        let snapshot = base(now);
+        let weather = snapshot.weather.unwrap();
+        assert!(weather.sunrise < weather.sunset);
+        assert_eq!(snapshot.airing.len(), 2);
+        assert!(snapshot.airing.iter().all(|e| e.at > Some(now)));
+        assert!(
+            snapshot
+                .next_up
+                .iter()
+                .all(|e| e.at.is_none() && e.poster.is_some())
+        );
+        assert!(!snapshot.today.unwrap().is_empty());
     }
 }

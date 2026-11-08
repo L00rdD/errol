@@ -2,10 +2,10 @@ use std::collections::BTreeMap;
 
 use chrono::DateTime;
 use errol_domain::entities::{
-    Actor, ActorState, Cerebro, Chapter, Cover, Disk, Download, Event, EventId, EventKind, House,
-    Import, MediaKind, NextChapter, OnePiece, Outlet, PictureRef, Playing, Portfolio, Position,
-    PrintNews, PrintPhase, Printer, Projector, Services, Session, SessionScene, SessionStatus,
-    Settings, Snapshot, Timestamp,
+    Actor, ActorState, Cerebro, Chapter, Cover, Disk, Download, Episode, Event, EventId, EventKind,
+    House, Import, MediaKind, NextChapter, OnePiece, Outlet, PictureRef, Playing, Portfolio,
+    Position, PrintNews, PrintPhase, Printer, Projector, Services, Session, SessionScene,
+    SessionStatus, Settings, Snapshot, Switch, Timestamp, Today, Weather,
 };
 use serde::{Deserialize, Deserializer};
 use serde_json::Value;
@@ -33,6 +33,60 @@ pub struct FeedFile {
     #[serde(deserialize_with = "nullable")]
     errors: BTreeMap<String, Option<String>>,
     settings: Option<SettingsModel>,
+    weather: Option<WeatherModel>,
+    #[serde(deserialize_with = "nullable")]
+    next_up: Vec<EpisodeModel>,
+    #[serde(deserialize_with = "nullable")]
+    airing: Vec<EpisodeModel>,
+    today: Option<TodayModel>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(default)]
+struct WeatherModel {
+    temperature: Option<f64>,
+    code: Option<u32>,
+    wind: Option<f64>,
+    high: Option<f64>,
+    low: Option<f64>,
+    rain: Option<f64>,
+    sunrise: Option<String>,
+    sunset: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(default)]
+struct EpisodeModel {
+    series: Option<String>,
+    season: Option<u32>,
+    episode: Option<u32>,
+    title: Option<String>,
+    poster: Option<String>,
+    at: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(default)]
+struct TodayModel {
+    #[serde(deserialize_with = "nullable")]
+    imports: u32,
+    #[serde(deserialize_with = "nullable")]
+    downloads: u32,
+    #[serde(deserialize_with = "nullable")]
+    plays: u32,
+    #[serde(deserialize_with = "nullable")]
+    lights: u32,
+    #[serde(deserialize_with = "nullable")]
+    prints: u32,
+    #[serde(deserialize_with = "nullable")]
+    questions: u32,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(default)]
+struct SwitchModel {
+    at: Option<String>,
+    on: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -84,6 +138,7 @@ struct OutletModel {
     name: String,
     #[serde(deserialize_with = "nullable")]
     on: bool,
+    next: Option<SwitchModel>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -107,6 +162,7 @@ struct ProjectorModel {
     #[serde(deserialize_with = "nullable")]
     on: bool,
     app: Option<String>,
+    closes_at: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -211,6 +267,8 @@ struct ServicesModel {
     up: u32,
     #[serde(deserialize_with = "nullable")]
     total: u32,
+    #[serde(deserialize_with = "nullable")]
+    down: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -312,10 +370,15 @@ where
     Option::<T>::deserialize(deserializer).map(Option::unwrap_or_default)
 }
 
-/// RFC 3339 to a timestamp; None when absent or malformed.
+/// RFC 3339 to a timestamp, seconds optional (the hub writes its schedules
+/// to the minute); None when absent or malformed.
 fn parse_time(text: Option<&str>) -> Option<Timestamp> {
-    text.and_then(|text| DateTime::parse_from_rfc3339(text).ok())
-        .map(|time| Timestamp(time.timestamp_millis()))
+    text.and_then(|text| {
+        DateTime::parse_from_rfc3339(text)
+            .or_else(|_| DateTime::parse_from_str(text, "%Y-%m-%dT%H:%M%:z"))
+            .ok()
+    })
+    .map(|time| Timestamp(time.timestamp_millis()))
 }
 
 fn media(kind: Option<&str>) -> MediaKind {
@@ -411,7 +474,21 @@ impl FeedFile {
     /// Turns the file into a snapshot. Jellyfin pictures are paths on the
     /// Jellyfin server, made absolute with `jellyfin`; Cerebro's sprites are
     /// paths on the home page (`hub`, its origin), which passes them on.
-    pub fn into_snapshot(self, jellyfin: &str, hub: &str) -> Snapshot {
+    pub fn into_snapshot(mut self, jellyfin: &str, hub: &str) -> Snapshot {
+        let picture = |path: Option<String>| absolute(jellyfin, path);
+        let extras = Snapshot {
+            weather: self.weather.take().as_ref().and_then(weather_of),
+            next_up: episodes(std::mem::take(&mut self.next_up), &picture),
+            airing: episodes(std::mem::take(&mut self.airing), &picture),
+            today: self.today.take().as_ref().map(today_of),
+            ..Snapshot::default()
+        };
+        self.into_base(jellyfin, hub, extras)
+    }
+
+    /// The snapshot of what the first versions of the feed already said,
+    /// over `extras`.
+    fn into_base(self, jellyfin: &str, hub: &str, extras: Snapshot) -> Snapshot {
         let sprite = |path: Option<String>| absolute(hub, path);
         let picture = |path: Option<String>| absolute(jellyfin, path);
         Snapshot {
@@ -447,6 +524,7 @@ impl FeedFile {
                 .map(|s| Services {
                     up: s.up,
                     total: s.total,
+                    down: s.down,
                 })
                 .unwrap_or_default(),
             cerebro: self.cerebro.map(|cerebro| cerebro_of(cerebro, &sprite)),
@@ -463,7 +541,52 @@ impl FeedFile {
                     follow_hub: settings.follow_hub,
                 })
                 .unwrap_or_default(),
+            ..extras
         }
+    }
+}
+
+/// The weather needs its temperature and its code.
+fn weather_of(w: &WeatherModel) -> Option<Weather> {
+    Some(Weather {
+        temperature: w.temperature?,
+        code: w.code?,
+        wind: w.wind,
+        high: w.high,
+        low: w.low,
+        rain: w.rain,
+        sunrise: parse_time(w.sunrise.as_deref()),
+        sunset: parse_time(w.sunset.as_deref()),
+    })
+}
+
+/// Episodes with a series; their posters, Jellyfin paths or URLs.
+fn episodes(
+    list: Vec<EpisodeModel>,
+    picture: &impl Fn(Option<String>) -> Option<PictureRef>,
+) -> Vec<Episode> {
+    list.into_iter()
+        .filter_map(|e| {
+            Some(Episode {
+                series: e.series.filter(|series| !series.is_empty())?,
+                season: e.season,
+                episode: e.episode,
+                title: e.title,
+                poster: picture(e.poster),
+                at: parse_time(e.at.as_deref()),
+            })
+        })
+        .collect()
+}
+
+fn today_of(t: &TodayModel) -> Today {
+    Today {
+        imports: t.imports,
+        downloads: t.downloads,
+        plays: t.plays,
+        lights: t.lights,
+        prints: t.prints,
+        questions: t.questions,
     }
 }
 
@@ -505,6 +628,12 @@ fn house_of(house: HouseModel) -> House {
                 id: o.id,
                 name: o.name,
                 on: o.on,
+                next: o.next.and_then(|next| {
+                    Some(Switch {
+                        at: parse_time(next.at.as_deref())?,
+                        on: next.on?,
+                    })
+                }),
             })
             .collect(),
         covers: house
@@ -527,6 +656,7 @@ fn house_of(house: HouseModel) -> House {
                 name: p.name,
                 on: p.on,
                 app: p.app,
+                closes_at: parse_time(p.closes_at.as_deref()),
             })
             .collect(),
     }
@@ -627,8 +757,8 @@ impl Fields<'_> {
         self.0.get(key).and_then(Value::as_str).map(str::to_owned)
     }
 
-    fn flag(&self, key: &str) -> bool {
-        self.0.get(key).and_then(Value::as_bool).unwrap_or(false)
+    fn flag(&self, key: &str) -> Option<bool> {
+        self.0.get(key).and_then(Value::as_bool)
     }
 
     fn number(&self, key: &str) -> Option<u64> {
@@ -659,20 +789,7 @@ fn event_kind(
 ) -> Option<EventKind> {
     let f = fields;
     Some(match f.text("kind")?.as_str() {
-        "light" => EventKind::Light {
-            name: f.text("name")?,
-            on: f.flag("on"),
-        },
-        "cover" => EventKind::Cover {
-            id: f.text("cover").unwrap_or_default(),
-            name: f.text("name").unwrap_or_default(),
-            down: cover_goes_down(f.0),
-        },
-        "projector" => EventKind::Projector {
-            name: f.text("name").unwrap_or_default(),
-            on: f.flag("on"),
-            app: f.text("app"),
-        },
+        kind @ ("light" | "cover" | "projector") => house_event(f, kind)?,
         "download" => EventKind::Download {
             name: f.text("name").unwrap_or_default(),
             size: f.number("size"),
@@ -695,6 +812,27 @@ fn event_kind(
         "print" => EventKind::Print(print_news(f, hub)?),
         _ => return None,
     })
+}
+
+/// A lamp, a cover or a projector. A switch the hub could not read is no
+/// news, neither on nor off: None.
+fn house_event(f: &Fields, kind: &str) -> Option<EventKind> {
+    match kind {
+        "light" => f
+            .text("name")
+            .zip(f.flag("on"))
+            .map(|(name, on)| EventKind::Light { name, on }),
+        "cover" => Some(EventKind::Cover {
+            id: f.text("cover").unwrap_or_default(),
+            name: f.text("name").unwrap_or_default(),
+            down: cover_goes_down(f.0),
+        }),
+        _ => f.flag("on").map(|on| EventKind::Projector {
+            name: f.text("name").unwrap_or_default(),
+            on,
+            app: f.text("app"),
+        }),
+    }
 }
 
 /// A cover goes down unless it moves up, or, standing still, rests at 0.
@@ -953,6 +1091,51 @@ mod tests {
             .into_snapshot("", "");
         assert_eq!(snapshot.events.len(), 1);
         assert_eq!(snapshot.warnings, vec!["house: ".to_owned()]);
+    }
+
+    #[test]
+    fn a_switch_the_hub_could_not_read_is_no_event() {
+        let file = r#"{"events": [{"id": "1", "kind": "projector", "name": "Projector", "on": null},
+                                  {"id": "2", "kind": "light", "name": "Lamp"},
+                                  {"id": "3", "kind": "projector", "name": "Projector", "on": false}]}"#;
+        let snapshot = serde_json::from_str::<FeedFile>(file)
+            .unwrap()
+            .into_snapshot("", "");
+        let ids: Vec<_> = snapshot.events.iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(ids, ["3"]);
+    }
+
+    #[test]
+    fn the_weather_the_episodes_the_day_and_the_hub_schedules_are_read() {
+        let file = r#"{"weather": {"temperature": 9.4, "code": 61, "wind": 18, "high": 12, "low": 6, "rain": 70,
+                                   "sunrise": "2026-11-08T07:58:00+01:00", "sunset": "2026-11-08T17:21:00+01:00"},
+                       "next_up": [{"series": "Arcane", "season": 2, "episode": 5, "poster": "/Items/a/Images/Primary"},
+                                   {"series": null}],
+                       "airing": [{"series": "Arcane", "season": 2, "episode": 6, "at": "2026-11-08T21:00:00+01:00",
+                                   "poster": "https://artworks.thetvdb.com/a.jpg"}],
+                       "today": {"imports": 3, "lights": null},
+                       "services": {"up": 17, "total": 18, "down": ["prowlarr"]},
+                       "house": {"outlets": [{"id": "neon", "name": "Néon", "on": false,
+                                              "next": {"at": "2026-11-08T19:00+01:00", "on": true}}],
+                                 "projectors": [{"id": "p", "name": "P", "on": false,
+                                                 "closes_at": "2026-11-08T23:05:00+01:00"}]}}"#;
+        let snapshot = serde_json::from_str::<FeedFile>(file)
+            .unwrap()
+            .into_snapshot("http://jf", "");
+        let weather = snapshot.weather.unwrap();
+        assert_eq!(weather.sky(), errol_domain::entities::Sky::Rain);
+        assert!(weather.sunset.is_some());
+        assert_eq!(snapshot.next_up.len(), 1);
+        assert_eq!(
+            snapshot.next_up[0].poster.as_ref().unwrap().as_str(),
+            "http://jf/Items/a/Images/Primary"
+        );
+        assert!(snapshot.airing[0].at.is_some());
+        assert_eq!(snapshot.today.unwrap().imports, 3);
+        assert_eq!(snapshot.services.down, ["prowlarr"]);
+        let house = snapshot.house.unwrap();
+        assert!(house.outlets[0].next.is_some_and(|next| next.on));
+        assert!(house.projectors[0].closes_at.is_some());
     }
 
     #[test]
