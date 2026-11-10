@@ -6,9 +6,12 @@ Errol is a living-room screen for a home server. It runs on a Raspberry Pi
 with a small HDMI display (800 × 480) and shows what is happening at home:
 what plays on Jellyfin, which lamp just switched on, a download that finished,
 a film that entered the library, the next One Piece chapter, a trading bot's
-portfolio. Something happens, and Errol takes the screen for a minute to tell
-you. A film starts, and the screen turns into a cinema marquee for as long as
-it plays.
+portfolio, a Claude Code session on the Mac waiting for an answer, a resin
+print going on. Something happens, and Errol tells you: a lamp in a small
+banner over what is shown, real news (a new episode, a print done) on the
+whole screen. A film starts, and the screen turns into a cinema marquee for as
+long as it plays. Late at night, with nothing on, it falls asleep to a faint
+clock.
 
 It draws straight on the display with the GPU: no X, no Wayland, no browser.
 
@@ -39,8 +42,8 @@ It draws straight on the display with the GPU: no X, no Wayland, no browser.
 
 The look can change while Errol runs. When the feed names a look in its
 `settings`, Errol switches to it at once; this is the remote control, set
-from the home page or from the projector's home screen (Pensieve), which
-follows the same setting. Without one, Errol keeps its own (`--look` or
+from the home page. The projector's home screen (Pensieve) keeps its own look
+and does not touch this setting. Without one, Errol keeps its own (`--look` or
 `ERROL_LOOK`). The looks' colours come from the house's `looks.json`, the
 reference the hub serves at `/theme/looks.json`; `assets/looks.json` is a
 copy of it, built into the binary.
@@ -49,9 +52,16 @@ copy of it, built into the binary.
 
 | Scene | When | For how long |
 | :--- | :--- | :--- |
-| Idle | nothing else | A clock in its turning rings, and cards that slide by every 12 s: the next One Piece chapter with a countdown, the portfolio, the house, downloads, latest additions with their posters, the server's free space |
-| Event | a lamp switches; the projection screen moves (its cloth comes down live); the projector starts or changes app; a download finishes; a film or an episode is imported; a new chapter is out | 25 s for a lamp, 40 s for the screen and the projector, 90 s for downloads and imports, 2 min for a chapter. A new event cuts the one on screen short and shows at once; those still waiting follow it, and a burst (ten episodes imported at once) takes a single turn |
-| Cinema | a video plays on Jellyfin | Until it stops: the blurred backdrop drifting, the poster in a holographic frame, the story, progress and end time |
+| Idle | nothing else | A clock in its turning rings, and cards that slide by: the next One Piece chapter with a countdown, the portfolio, the house (with its next scheduled switch, and when the projection screen goes back up), the Mac's Claude Code sessions (drawn as Cerebro draws them: its X-Mansion rooms and X-Men, in pixel art), downloads, the resin printer while it is on (the slicer's picture of the print, progress, layers, time left), latest additions with their posters, the weather and the sun, the episodes airing tonight and those to watch next, the day so far (a split-flap board, or the Prophet's evening edition), the server. The cards take turns by relevance: a card with nothing to say is skipped, the house comes first when it just changed, the printer every other turn near the end of a print, the server only when space runs low or a service is down; news stays 10 s, routine 6 s |
+| Banner | a lamp switches; the projection screen moves; the projector changes app; anything at all while a video plays | 8 s, over whatever is shown, at the bottom right: glass in friday, a red and yellow panel in cyberpunk, a note pinned on the Map. The newest cuts the one before, and the background answers (neurons light up, a data column flares, Filch hurries or an owl crosses the Map) |
+| Event | the projector turns on or off; a download finishes; a film or an episode is imported; a new chapter is out; a Claude Code session waits for an answer; a print starts, finishes or is cancelled | 20 s for the projector, 30 s for a session, 45 s for a print, 1 min for a download, 75 s for an import, 90 s for a chapter. A new event cuts the one on screen short and shows at once; those still waiting follow it, one that waited more than 4 min is dropped as old news, and a burst (ten episodes imported at once) takes a single turn |
+| Cinema | a video plays on Jellyfin | Until it stops: the blurred backdrop drifting, the poster in a holographic frame, the story, progress and end time. A video that starts cuts the event on screen short |
+
+The house sets the mood. While the projector is on or a video plays, the
+background calms down. From 1 h to 7 h, with no lamp, projector or video on,
+the screen sleeps: a dark veil over everything but a faint clock, at 5 frames
+a second; an event wakes it for its time, a banner shows dimmed. The weather
+falls in the background too: neon rain in cyberpunk, drops of ink on the Map.
 
 The screen never replays the past: what happened before it started only sets
 the scene.
@@ -97,12 +107,19 @@ Every field is optional: Errol shows what it gets and hides the rest.
     {"id": "1-4", "kind": "download", "at": "…", "name": "Some.Release.1080p", "size": 6400000000},
     {"id": "1-5", "kind": "import", "at": "…", "media": "episode", "title": "Arcane", "season": 2, "episode": 4,
      "episode_title": "…", "quality": "WEBDL-1080p", "poster": "https://image.tmdb.org/t/p/w342/…"},
-    {"id": "1-6", "kind": "scan", "at": "…", "scan": 1197, "name": "…", "arc": "Elbaf", "pages": 17}
+    {"id": "1-6", "kind": "scan", "at": "…", "scan": 1197, "name": "…", "arc": "Elbaf", "pages": 17},
+    {"id": "1-7", "kind": "cerebro", "at": "…", "name": "errol-8b", "project": "~/personal/errol",
+     "status": "waiting", "room": "Danger Room"},
+    {"id": "1-8", "kind": "print", "at": "…", "phase": "started",   // or "done", "cancelled"
+     "printer": "Anycubic Photon Mono M7", "file": "04_riser", "image": "/printer.jpg?…",
+     "layers": 2978, "remaining": 18720, "started_at": "…"}           // seconds left
   ],
   "house": {
-    "outlets": [{"id": "desk-lamp", "name": "Desk lamp", "on": true}],
+    "outlets": [{"id": "desk-lamp", "name": "Desk lamp", "on": true,
+                 "next": {"at": "2026-10-26T23:30+01:00", "on": false}}],     // its next scheduled switch
     "covers": [{"id": "screen", "name": "Screen", "position": 100, "moving": null}],   // 0 up, 100 down
-    "projectors": [{"id": "projector", "name": "Projector", "on": true, "app": "Jellyfin"}]
+    "projectors": [{"id": "projector", "name": "Projector", "on": true, "app": "Jellyfin",
+                    "closes_at": null}]  // when its screen goes back up, the projector being off
   },
   "downloads": [{"name": "Some.Release.1080p", "percent": 63.4, "eta": 1260}],
   "recent": [{"media": "movie", "title": "…", "year": 2023, "poster": "https://…"}],
@@ -111,7 +128,25 @@ Every field is optional: Errol shows what it gets and hides the rest.
   "portfolio": {"name": "Bot", "mode": "paper", "equity": 1087.42, "initial": 1000, "trades": 12,
                 "positions": [{"pair": "BTC/USDT", "avg": 60000, "price": 63150}]},
   "disk": {"total": 1430000000000, "used": 980000000000, "free": 450000000000},
-  "services": {"up": 18, "total": 18},
+  "services": {"up": 17, "total": 18, "down": ["prowlarr"]},
+  "weather": {"temperature": 9.4, "code": 61, "wind": 18, "high": 12, "low": 6,   // °C, WMO code, km/h
+              "rain": 70, "sunrise": "…", "sunset": "…"},                         // % chance of rain soon
+  "next_up": [{"series": "Arcane", "season": 2, "episode": 5, "title": "…",
+               "poster": "/Items/…/Images/Primary"}],                             // Jellyfin's next up
+  "airing": [{"series": "Arcane", "season": 2, "episode": 6, "at": "…", "poster": "https://…"}],  // today, tomorrow
+  "today": {"imports": 3, "downloads": 2, "plays": 1, "lights": 5, "prints": 1, "questions": 4},  // since midnight
+  "cerebro": {"sessions": [{                // Claude Code sessions, from Cerebro on the Mac (absent while it sleeps)
+    "name": "errol-8b", "project": "~/personal/errol", "status": "waiting",   // or "busy", "idle"
+    "since": "…", "room": "Danger Room", "lead": "Cyclops", "agents": 0,
+    "scene": {"room": {"sprite": "/cerebro/rooms/danger-room.png", "frames": 16, "fps": 8,   // sprites: paths on the hub
+                       "walk": {"x": 14, "y": 64, "width": 164, "height": 50}},
+              "actors": [{"id": "lead:…", "name": "Cyclops", "sprite": "/cerebro/characters/cyclops.png",
+                          "move": "walk", "power": "beam", "color": "#FF2A2A", "aura": null, "state": "alert"}]}}],
+   "room_size": [192, 120], "character_size": [24, 24], "emotes": "/cerebro/ui/emotes.png"},
+  "printer": {"name": "Anycubic Photon Mono M7", "state": "printing", "active": true,   // while it is on
+              "file": "04_riser", "progress": 37.0, "layer": 1102, "layers": 2978,
+              "remaining": 11800, "ends_at": "…", "image": "https://…",   // a path on the hub, or a URL
+              "cloud": "ok"},                 // else why there is no print: "no token"…
   "errors": {"house": "timeout"},     // sources the feed could not read
   "settings": {"look": "hogwarts",    // the look to show now; null keeps Errol's own
                "follow_hub": true}    // for the feed: the home page sets the look when its own changes
@@ -136,7 +171,8 @@ cargo run -p errol-app -- --demo scan --shot scan.png --after 6   # a PNG, no wi
 ```
 
 The demo scenes are `idle`, `light`, `cover`, `projector`, `cinema`, `import`,
-`download` and `scan`. Escape or Q closes the window.
+`download`, `scan`, `cerebro` and `print`; `--night` shows the screen asleep.
+Escape or Q closes the window.
 
 ### On a Raspberry Pi
 
@@ -207,8 +243,9 @@ deploy/               the service, the install script, the EDID generator
 
 The code is in three layers:
 
-- **The domain is pure.** `SceneDirector` decides the scene from events and a
-  timestamp, so its tests need neither a clock nor a network.
+- **The domain is pure.** `SceneDirector` decides the scene and the banner
+  from events and a timestamp, and `Mode` the house's mood from the snapshot
+  and the hour, so their tests need neither a clock nor a network.
 - **Adapters implement the domain's ports** (`FeedSource`, `PictureSource`,
   `Clock`). The demo is a `FeedSource` like the real feed.
 - **The app wires them in one place** (`injector.rs`). It reads the feed on its

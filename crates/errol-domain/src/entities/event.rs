@@ -1,4 +1,4 @@
-use super::{Chapter, Import, Timestamp};
+use super::{Chapter, Import, PictureRef, Timestamp};
 
 /// Identifier the feed gives to an event, stable across reads.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -44,6 +44,36 @@ pub enum EventKind {
     Import(Import),
     /// A new One Piece scan is out.
     Scan(Chapter),
+    /// A Claude Code session on the Mac waits for an answer (Cerebro).
+    Waiting {
+        name: String,
+        project: Option<String>,
+        room: Option<String>,
+    },
     /// A video started on Jellyfin (the cinema scene shows it; no takeover).
     Play { title: String },
+    /// A print on the resin printer started, finished or was cancelled.
+    Print(PrintNews),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PrintPhase {
+    /// Its first layers are being cured.
+    Started,
+    Done,
+    Cancelled,
+}
+
+/// What a print event tells.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PrintNews {
+    pub phase: PrintPhase,
+    /// The printer's name.
+    pub printer: String,
+    pub file: String,
+    pub image: Option<PictureRef>,
+    pub layers: Option<u32>,
+    /// Seconds left when it started.
+    pub remaining: Option<f64>,
+    pub started: Option<Timestamp>,
 }

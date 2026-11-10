@@ -173,7 +173,13 @@ fn parchment(c: &mut Canvas<OpenGl>, italic: FontId) {
         ],
     );
     c.fill_path(&rect(0.0, 0.0, w, h), &paper);
-    // stains
+    stains(c, w, h);
+    folds(c, w, h);
+    grain(c, w, h);
+    castle(c, italic);
+}
+
+fn stains(c: &mut Canvas<OpenGl>, w: f32, h: f32) {
     for (fx, fy, r, a) in [
         (0.18, 0.72, 75.0, 0.22),
         (0.82, 0.22, 57.0, 0.18),
@@ -186,20 +192,12 @@ fn parchment(c: &mut Canvas<OpenGl>, italic: FontId) {
         path.circle(x, y, r);
         c.fill_path(&path, &stain);
     }
-    // folds: two down, one across
+}
+
+/// Two folds down, one across: a shadow, then a light edge.
+fn folds(c: &mut Canvas<OpenGl>, w: f32, h: f32) {
     for x in [w / 3.0, w * 2.0 / 3.0] {
-        let fold = Paint::linear_gradient_stops(
-            x - 6.0,
-            0.0,
-            x + 6.0,
-            0.0,
-            [
-                (0.0, rgba(0x5a3c14, 0.0)),
-                (0.45, rgba(0x5a3c14, 0.2)),
-                (0.55, rgba(0xfffae6, 0.3)),
-                (1.0, rgba(0xfffae6, 0.0)),
-            ],
-        );
+        let fold = Paint::linear_gradient_stops(x - 6.0, 0.0, x + 6.0, 0.0, fold_stops(0.2, 0.3));
         c.fill_path(&rect(x - 6.0, 0.0, 12.0, h), &fold);
     }
     let fold = Paint::linear_gradient_stops(
@@ -207,15 +205,21 @@ fn parchment(c: &mut Canvas<OpenGl>, italic: FontId) {
         h / 2.0 - 5.0,
         0.0,
         h / 2.0 + 5.0,
-        [
-            (0.0, rgba(0x5a3c14, 0.0)),
-            (0.45, rgba(0x5a3c14, 0.16)),
-            (0.55, rgba(0xfffae6, 0.24)),
-            (1.0, rgba(0xfffae6, 0.0)),
-        ],
+        fold_stops(0.16, 0.24),
     );
     c.fill_path(&rect(0.0, h / 2.0 - 5.0, w, 10.0), &fold);
-    // grain
+}
+
+fn fold_stops(shadow: f32, light: f32) -> [(f32, Color); 4] {
+    [
+        (0.0, rgba(0x5a3c14, 0.0)),
+        (0.45, rgba(0x5a3c14, shadow)),
+        (0.55, rgba(0xfffae6, light)),
+        (1.0, rgba(0xfffae6, 0.0)),
+    ]
+}
+
+fn grain(c: &mut Canvas<OpenGl>, w: f32, h: f32) {
     let mut dark = Path::new();
     let mut light = Path::new();
     for i in 0..7000u64 {
@@ -229,46 +233,15 @@ fn parchment(c: &mut Canvas<OpenGl>, italic: FontId) {
     }
     fill(c, &dark, rgba(0x6b3a10, 0.06));
     fill(c, &light, rgba(0xfff4d8, 0.06));
-    castle(c, italic);
 }
 
 /// Rooms, corridors (double lines) and stairs, in faint ink, and the names
 /// of a few places in an italic hand.
 fn castle(c: &mut Canvas<OpenGl>, italic: FontId) {
     let line = rgba(0x5a2d0a, 0.24);
-    let mut rooms = Path::new();
-    for i in 0..26u64 {
-        let (x, y) = (unit(i, 11) * 792.0, unit(i, 12) * 440.0);
-        let (rw, rh) = (35.0 + unit(i, 13) * 97.0, 26.0 + unit(i, 14) * 70.0);
-        rooms.rect(x, y, rw, rh);
-        if unit(i, 15) < 0.4 {
-            rooms.rect(x + 2.2, y + 2.2, rw - 4.4, rh - 4.4);
-        }
-    }
-    stroke(c, &rooms, line, 1.0);
-    let mut corridors = Path::new();
-    for i in 0..34u64 {
-        let (x, y) = (unit(i, 21) * 800.0, unit(i, 22) * 480.0);
-        let len = 88.0 + unit(i, 23) * 264.0;
-        if unit(i, 24) < 0.5 {
-            corridors.move_to(x, y);
-            corridors.line_to(x + len, y);
-            corridors.move_to(x, y + 11.5);
-            corridors.line_to(x + len, y + 11.5);
-        } else {
-            corridors.move_to(x, y);
-            corridors.line_to(x, y + len);
-            corridors.move_to(x + 11.5, y);
-            corridors.line_to(x + 11.5, y + len);
-        }
-    }
-    for i in 0..8u64 {
-        let (x, y) = (unit(i, 31) * 814.0, unit(i, 32) * 449.0);
-        for k in 0..9 {
-            corridors.move_to(x + k as f32 * 3.1, y);
-            corridors.line_to(x + k as f32 * 3.1, y + 18.0);
-        }
-    }
+    stroke(c, &rooms(), line, 1.0);
+    let mut corridors = corridors();
+    stairs(&mut corridors);
     stroke(c, &corridors, line, 0.7);
     let paint = Paint::color(rgba(0x3a2312, 0.35))
         .with_font(&[italic])
@@ -283,6 +256,50 @@ fn castle(c: &mut Canvas<OpenGl>, italic: FontId) {
         ("Saule cogneur", 519.0, 458.0),
     ] {
         let _ = c.fill_text(x, y, name, &paint);
+    }
+}
+
+/// The rooms, some with a double wall.
+fn rooms() -> Path {
+    let mut rooms = Path::new();
+    for i in 0..26u64 {
+        let (x, y) = (unit(i, 11) * 792.0, unit(i, 12) * 440.0);
+        let (rw, rh) = (35.0 + unit(i, 13) * 97.0, 26.0 + unit(i, 14) * 70.0);
+        rooms.rect(x, y, rw, rh);
+        if unit(i, 15) < 0.4 {
+            rooms.rect(x + 2.2, y + 2.2, rw - 4.4, rh - 4.4);
+        }
+    }
+    rooms
+}
+
+/// Corridors, across or down, as two parallel lines.
+fn corridors() -> Path {
+    let mut corridors = Path::new();
+    for i in 0..34u64 {
+        let (x, y) = (unit(i, 21) * 800.0, unit(i, 22) * 480.0);
+        let len = 88.0 + unit(i, 23) * 264.0;
+        let (dx, dy, ox, oy) = if unit(i, 24) < 0.5 {
+            (len, 0.0, 0.0, 11.5)
+        } else {
+            (0.0, len, 11.5, 0.0)
+        };
+        corridors.move_to(x, y);
+        corridors.line_to(x + dx, y + dy);
+        corridors.move_to(x + ox, y + oy);
+        corridors.line_to(x + ox + dx, y + oy + dy);
+    }
+    corridors
+}
+
+/// Flights of stairs: nine short treads side by side.
+fn stairs(path: &mut Path) {
+    for i in 0..8u64 {
+        let (x, y) = (unit(i, 31) * 814.0, unit(i, 32) * 449.0);
+        for k in 0..9 {
+            path.move_to(x + k as f32 * 3.1, y);
+            path.line_to(x + k as f32 * 3.1, y + 18.0);
+        }
     }
 }
 

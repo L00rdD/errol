@@ -12,7 +12,7 @@
 //! look       the three looks: friday (the AI after J.A.R.V.I.S.), cyberpunk, hogwarts
 //! anim       easing, decoding text, timing
 //! fx         animated backgrounds: neural network, Netwatch grid, the Marauder's Map
-//! scenes     header, ticker, idle recap, events, cinema
+//! scenes     header, ticker, idle recap, events, cinema, banners, the night's veil
 //! ```
 
 mod anim;
