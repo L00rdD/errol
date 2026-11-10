@@ -17,8 +17,8 @@ pub struct HttpFeedSource {
     /// The home page's origin (`http://localhost`): Cerebro's sprites are on it.
     hub: String,
     agent: ureq::Agent,
-    /// The stream's connection: it stays open for hours, so no global budget;
-    /// the feed writes a comment every 15 s, and reading waits for it.
+    /// The stream's connection: no global budget, but its body ends after
+    /// `STREAM_LIFE`, so a stream that hangs without a word is dropped in time.
     streaming: ureq::Agent,
 }
 
@@ -34,6 +34,7 @@ impl HttpFeedSource {
         let streaming = ureq::Agent::config_builder()
             .timeout_connect(Some(Duration::from_secs(4)))
             .timeout_recv_response(Some(Duration::from_secs(10)))
+            .timeout_recv_body(Some(STREAM_LIFE))
             .build()
             .into();
         Self {
@@ -46,6 +47,9 @@ impl HttpFeedSource {
         }
     }
 }
+
+/// How long one connection to the stream lasts before the next one takes over.
+const STREAM_LIFE: Duration = Duration::from_mins(30);
 
 /// The stream next to the feed: `…/screen.json` → `…/screen/events`.
 fn events_url(feed: &str) -> String {

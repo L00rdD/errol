@@ -14,10 +14,11 @@ use errol_domain::usecases::ObserveFeed;
 /// The feed service writes every 3 s; reading every second adds at most a
 /// second to that before an event takes the screen.
 const INTERVAL: Duration = Duration::from_secs(1);
-/// The stream says something at least every 15 s (a comment when the feed is
-/// quiet): longer than this without a word, and the poller asks by itself. A
-/// lamp switched while a stream hangs waits no longer than this.
-const STALE: Duration = Duration::from_secs(20);
+/// The feed pushes the document at least every 30 s, even unchanged (its
+/// comments in between are not counted): longer than this without one, and
+/// the poller asks by itself. A lamp switched while a stream hangs waits no
+/// longer than this.
+const STALE: Duration = Duration::from_secs(45);
 /// How long after a stream ended (or went quiet) the next one is tried.
 const RETRY: Duration = Duration::from_secs(15);
 
@@ -41,15 +42,18 @@ fn poll(observe: &Arc<ObserveFeed>) {
             .unwrap_or_else(Instant::now),
     ));
     let following = Arc::new(AtomicBool::new(false));
+    // a stream's thread is running: never two at once, each holds a connection
+    let open = Arc::new(AtomicBool::new(false));
     let mut tried: Option<Instant> = None;
     loop {
         let heard_ago = heard
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .elapsed();
-        if should_try_stream(heard_ago, tried.map(|at| at.elapsed())) {
+        let quiet = !open.load(Ordering::Relaxed);
+        if quiet && should_try_stream(heard_ago, tried.map(|at| at.elapsed())) {
             tried = Some(Instant::now());
-            follow(observe.clone(), heard.clone(), following.clone());
+            follow(observe.clone(), heard.clone(), following.clone(), &open);
         }
         if should_ask(heard_ago, following.load(Ordering::Relaxed)) {
             observe.refresh();
@@ -69,13 +73,32 @@ fn should_ask(heard_ago: Duration, following: bool) -> bool {
 }
 
 /// Follows the stream on its own thread until it ends; a stream that hangs
-/// (a cable pulled) stays quiet, and the poller takes over after `STALE`.
-fn follow(observe: Arc<ObserveFeed>, heard: Arc<Mutex<Instant>>, following: Arc<AtomicBool>) {
-    let spawned = thread::Builder::new()
-        .name("stream".into())
-        .spawn(move || stream(&observe, &heard, &following));
+/// (a cable pulled) stays quiet, and the poller takes over after `STALE`
+/// until the stream's time is up and the next one is tried.
+fn follow(
+    observe: Arc<ObserveFeed>,
+    heard: Arc<Mutex<Instant>>,
+    following: Arc<AtomicBool>,
+    open: &Arc<AtomicBool>,
+) {
+    open.store(true, Ordering::Relaxed);
+    let closing = open.clone();
+    let spawned = thread::Builder::new().name("stream".into()).spawn(move || {
+        let _open = Open(closing);
+        stream(&observe, &heard, &following);
+    });
     if let Err(error) = spawned {
+        open.store(false, Ordering::Relaxed);
         eprintln!("errol: no stream thread: {error}");
+    }
+}
+
+/// Marks the stream's thread running while it lives, even if it panics.
+struct Open(Arc<AtomicBool>);
+
+impl Drop for Open {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Relaxed);
     }
 }
 
@@ -128,5 +151,25 @@ mod tests {
         mark(&following, &heard);
         assert!(following.load(Ordering::Relaxed));
         assert!(heard.lock().unwrap().elapsed() < STALE);
+    }
+
+    #[test]
+    fn a_quiet_house_is_not_a_quiet_stream() {
+        // the feed pushes an unchanged document every 30 s
+        assert!(!should_try_stream(Duration::from_secs(30), None));
+        assert!(!should_ask(Duration::from_secs(30), true));
+    }
+
+    #[test]
+    fn the_stream_is_marked_closed_when_its_thread_ends() {
+        let open = Arc::new(AtomicBool::new(true));
+        let closing = open.clone();
+        thread::spawn(move || {
+            let _open = Open(closing);
+            panic!("the stream broke");
+        })
+        .join()
+        .unwrap_err();
+        assert!(!open.load(Ordering::Relaxed));
     }
 }
